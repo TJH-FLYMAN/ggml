@@ -1,0 +1,344 @@
+[
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/cc -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu11 -fPIC -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wdouble-promotion -pthread -o CMakeFiles/ggml-base.dir/ggml.c.o -c /home/jhtang3/ggml/ggml-master/src/ggml.c",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml.c",
+  "output": "src/CMakeFiles/ggml-base.dir/ggml.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/cc -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu11 -fPIC -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wdouble-promotion -pthread -o CMakeFiles/ggml-base.dir/ggml-alloc.c.o -c /home/jhtang3/ggml/ggml-master/src/ggml-alloc.c",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-alloc.c",
+  "output": "src/CMakeFiles/ggml-base.dir/ggml-alloc.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -pthread -o CMakeFiles/ggml-base.dir/ggml-backend.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-backend.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-backend.cpp",
+  "output": "src/CMakeFiles/ggml-base.dir/ggml-backend.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -pthread -o CMakeFiles/ggml-base.dir/ggml-opt.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-opt.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-opt.cpp",
+  "output": "src/CMakeFiles/ggml-base.dir/ggml-opt.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -pthread -o CMakeFiles/ggml-base.dir/ggml-threading.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-threading.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-threading.cpp",
+  "output": "src/CMakeFiles/ggml-base.dir/ggml-threading.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/cc -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu11 -fPIC -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wdouble-promotion -pthread -o CMakeFiles/ggml-base.dir/ggml-quants.c.o -c /home/jhtang3/ggml/ggml-master/src/ggml-quants.c",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-quants.c",
+  "output": "src/CMakeFiles/ggml-base.dir/ggml-quants.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_base_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -pthread -o CMakeFiles/ggml-base.dir/gguf.cpp.o -c /home/jhtang3/ggml/ggml-master/src/gguf.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/gguf.cpp",
+  "output": "src/CMakeFiles/ggml-base.dir/gguf.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/cc -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu11 -fPIC -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wdouble-promotion -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu.c.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu.c",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu.c",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu.cpp",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-aarch64.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-aarch64.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-aarch64.cpp",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-aarch64.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-hbm.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-hbm.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-hbm.cpp",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-hbm.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/cc -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu11 -fPIC -Wshadow -Wstrict-prototypes -Wpointer-arith -Wmissing-prototypes -Werror=implicit-int -Werror=implicit-function-declaration -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wdouble-promotion -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-quants.c.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-quants.c",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-quants.c",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-quants.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-traits.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-traits.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/ggml-cpu-traits.cpp",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/ggml-cpu-traits.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/amx/amx.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/amx/amx.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/amx/amx.cpp",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/amx/amx.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_BUILD -DGGML_BACKEND_SHARED -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU_AARCH64 -DGGML_USE_OPENMP -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_cpu_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/.. -I/home/jhtang3/ggml/ggml-master/src/. -I/home/jhtang3/ggml/ggml-master/src/ggml-cpu -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -march=native -fopenmp -o CMakeFiles/ggml-cpu.dir/ggml-cpu/amx/mmq.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-cpu/amx/mmq.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-cpu/amx/mmq.cpp",
+  "output": "src/CMakeFiles/ggml-cpu.dir/ggml-cpu/amx/mmq.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/src",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_BUILD -DGGML_SCHED_MAX_COPIES=4 -DGGML_SHARED -DGGML_USE_CPU -D_GLIBCXX_ASSERTIONS -D_GNU_SOURCE -D_XOPEN_SOURCE=600 -Dggml_EXPORTS -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -fPIC -Wmissing-declarations -Wmissing-noreturn -Wall -Wextra -Wpedantic -Wcast-qual -Wno-unused-function -Wno-array-bounds -o CMakeFiles/ggml.dir/ggml-backend-reg.cpp.o -c /home/jhtang3/ggml/ggml-master/src/ggml-backend-reg.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/src/ggml-backend-reg.cpp",
+  "output": "src/CMakeFiles/ggml.dir/ggml-backend-reg.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-vec0.dir/test-vec0.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-vec0.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-vec0.c",
+  "output": "tests/CMakeFiles/test-vec0.dir/test-vec0.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-vec1.dir/test-vec1.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-vec1.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-vec1.c",
+  "output": "tests/CMakeFiles/test-vec1.dir/test-vec1.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-opt.dir/test-opt.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-opt.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-opt.cpp",
+  "output": "tests/CMakeFiles/test-opt.dir/test-opt.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-quantize-fns.dir/test-quantize-fns.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-quantize-fns.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-quantize-fns.cpp",
+  "output": "tests/CMakeFiles/test-quantize-fns.dir/test-quantize-fns.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-quantize-perf.dir/test-quantize-perf.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-quantize-perf.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-quantize-perf.cpp",
+  "output": "tests/CMakeFiles/test-quantize-perf.dir/test-quantize-perf.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-mul-mat0.dir/test-mul-mat0.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-mul-mat0.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-mul-mat0.c",
+  "output": "tests/CMakeFiles/test-mul-mat0.dir/test-mul-mat0.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-mul-mat2.dir/test-mul-mat2.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-mul-mat2.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-mul-mat2.c",
+  "output": "tests/CMakeFiles/test-mul-mat2.dir/test-mul-mat2.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test0.dir/test0.c.o -c /home/jhtang3/ggml/ggml-master/tests/test0.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test0.c",
+  "output": "tests/CMakeFiles/test0.dir/test0.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-pool.dir/test-pool.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-pool.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-pool.c",
+  "output": "tests/CMakeFiles/test-pool.dir/test-pool.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-arange.dir/test-arange.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-arange.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-arange.cpp",
+  "output": "tests/CMakeFiles/test-arange.dir/test-arange.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-timestep_embedding.dir/test-timestep_embedding.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-timestep_embedding.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-timestep_embedding.cpp",
+  "output": "tests/CMakeFiles/test-timestep_embedding.dir/test-timestep_embedding.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-pad-reflect-1d.dir/test-pad-reflect-1d.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-pad-reflect-1d.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-pad-reflect-1d.cpp",
+  "output": "tests/CMakeFiles/test-pad-reflect-1d.dir/test-pad-reflect-1d.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-conv-transpose.dir/test-conv-transpose.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-conv-transpose.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-conv-transpose.c",
+  "output": "tests/CMakeFiles/test-conv-transpose.dir/test-conv-transpose.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-conv-transpose-1d.dir/test-conv-transpose-1d.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-conv-transpose-1d.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-conv-transpose-1d.cpp",
+  "output": "tests/CMakeFiles/test-conv-transpose-1d.dir/test-conv-transpose-1d.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-dup.dir/test-dup.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-dup.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-dup.c",
+  "output": "tests/CMakeFiles/test-dup.dir/test-dup.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-rel-pos.dir/test-rel-pos.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-rel-pos.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-rel-pos.c",
+  "output": "tests/CMakeFiles/test-rel-pos.dir/test-rel-pos.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-customop.dir/test-customop.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-customop.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-customop.c",
+  "output": "tests/CMakeFiles/test-customop.dir/test-customop.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-conv1d.dir/test-conv1d.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-conv1d.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-conv1d.cpp",
+  "output": "tests/CMakeFiles/test-conv1d.dir/test-conv1d.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-conv2d.dir/test-conv2d.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-conv2d.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-conv2d.cpp",
+  "output": "tests/CMakeFiles/test-conv2d.dir/test-conv2d.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-mul-mat.dir/test-mul-mat.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-mul-mat.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-mul-mat.cpp",
+  "output": "tests/CMakeFiles/test-mul-mat.dir/test-mul-mat.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z   -UNDEBUG -o CMakeFiles/test-backend-ops.dir/test-backend-ops.cpp.o -c /home/jhtang3/ggml/ggml-master/tests/test-backend-ops.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-backend-ops.cpp",
+  "output": "tests/CMakeFiles/test-backend-ops.dir/test-backend-ops.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/tests",
+  "command": "/usr/bin/cc -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include  -mavx -mavx2 -mfma -mf16c -msse3 -g -std=gnu11   -UNDEBUG -o CMakeFiles/test-cont.dir/test-cont.c.o -c /home/jhtang3/ggml/ggml-master/tests/test-cont.c",
+  "file": "/home/jhtang3/ggml/ggml-master/tests/test-cont.c",
+  "output": "tests/CMakeFiles/test-cont.dir/test-cont.c.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples",
+  "command": "/usr/bin/c++  -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/common.dir/common.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/common.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/common.cpp",
+  "output": "examples/CMakeFiles/common.dir/common.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/examples -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/common-ggml.dir/common-ggml.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/common-ggml.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/common-ggml.cpp",
+  "output": "examples/CMakeFiles/common-ggml.dir/common-ggml.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-2",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-2-ctx.dir/main-ctx.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-2/main-ctx.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-2/main-ctx.cpp",
+  "output": "examples/gpt-2/CMakeFiles/gpt-2-ctx.dir/main-ctx.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-2",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-2-alloc.dir/main-alloc.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-2/main-alloc.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-2/main-alloc.cpp",
+  "output": "examples/gpt-2/CMakeFiles/gpt-2-alloc.dir/main-alloc.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-2",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-2-backend.dir/main-backend.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-2/main-backend.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-2/main-backend.cpp",
+  "output": "examples/gpt-2/CMakeFiles/gpt-2-backend.dir/main-backend.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-2",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-2-sched.dir/main-sched.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-2/main-sched.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-2/main-sched.cpp",
+  "output": "examples/gpt-2/CMakeFiles/gpt-2-sched.dir/main-sched.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-2",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-2-quantize.dir/quantize.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-2/quantize.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-2/quantize.cpp",
+  "output": "examples/gpt-2/CMakeFiles/gpt-2-quantize.dir/quantize.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-2",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-2-batched.dir/main-batched.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-2/main-batched.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-2/main-batched.cpp",
+  "output": "examples/gpt-2/CMakeFiles/gpt-2-batched.dir/main-batched.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-j",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-j.dir/main.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-j/main.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-j/main.cpp",
+  "output": "examples/gpt-j/CMakeFiles/gpt-j.dir/main.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/gpt-j",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/gpt-j-quantize.dir/quantize.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/gpt-j/quantize.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/gpt-j/quantize.cpp",
+  "output": "examples/gpt-j/CMakeFiles/gpt-j-quantize.dir/quantize.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/mnist",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/mnist-common.dir/mnist-common.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/mnist/mnist-common.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/mnist/mnist-common.cpp",
+  "output": "examples/mnist/CMakeFiles/mnist-common.dir/mnist-common.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/mnist",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/mnist-eval.dir/mnist-eval.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/mnist/mnist-eval.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/mnist/mnist-eval.cpp",
+  "output": "examples/mnist/CMakeFiles/mnist-eval.dir/mnist-eval.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/mnist",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/mnist-train.dir/mnist-train.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/mnist/mnist-train.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/mnist/mnist-train.cpp",
+  "output": "examples/mnist/CMakeFiles/mnist-train.dir/mnist-train.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/sam",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/sam.dir/main.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/sam/main.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/sam/main.cpp",
+  "output": "examples/sam/CMakeFiles/sam.dir/main.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/yolo",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/yolov3-tiny.dir/yolov3-tiny.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/yolo/yolov3-tiny.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/yolo/yolov3-tiny.cpp",
+  "output": "examples/yolo/CMakeFiles/yolov3-tiny.dir/yolov3-tiny.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/yolo",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/yolov3-tiny.dir/yolo-image.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/yolo/yolo-image.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/yolo/yolo-image.cpp",
+  "output": "examples/yolo/CMakeFiles/yolov3-tiny.dir/yolo-image.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/simple",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/simple-ctx.dir/simple-ctx.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/simple/simple-ctx.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/simple/simple-ctx.cpp",
+  "output": "examples/simple/CMakeFiles/simple-ctx.dir/simple-ctx.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/simple",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/simple-backend.dir/simple-backend.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/simple/simple-backend.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/simple/simple-backend.cpp",
+  "output": "examples/simple/CMakeFiles/simple-backend.dir/simple-backend.cpp.o"
+},
+{
+  "directory": "/home/jhtang3/ggml/ggml-master/build/examples/magika",
+  "command": "/usr/bin/c++ -DGGML_BACKEND_SHARED -DGGML_SHARED -DGGML_USE_CPU -I/home/jhtang3/ggml/ggml-master/src/../include -I/home/jhtang3/ggml/ggml-master/examples -g -std=gnu++1z -Wpedantic -Wunused-variable -Wno-unused-function -Wno-multichar -o CMakeFiles/magika.dir/main.cpp.o -c /home/jhtang3/ggml/ggml-master/examples/magika/main.cpp",
+  "file": "/home/jhtang3/ggml/ggml-master/examples/magika/main.cpp",
+  "output": "examples/magika/CMakeFiles/magika.dir/main.cpp.o"
+}
+]

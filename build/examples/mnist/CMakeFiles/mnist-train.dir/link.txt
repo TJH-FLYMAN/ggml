@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/mnist-train.dir/mnist-train.cpp.o" -o ../../bin/mnist-train  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../libcommon.a libmnist-common.a ../../src/libggml.so ../../src/libggml-cpu.so ../../src/libggml-base.so ../libcommon.a 

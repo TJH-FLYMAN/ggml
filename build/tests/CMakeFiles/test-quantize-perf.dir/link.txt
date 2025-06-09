@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/test-quantize-perf.dir/test-quantize-perf.cpp.o" -o ../bin/test-quantize-perf  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 

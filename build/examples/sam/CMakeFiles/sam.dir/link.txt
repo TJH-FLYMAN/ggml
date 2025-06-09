@@ -1,0 +1,1 @@
+/usr/bin/c++ -g CMakeFiles/sam.dir/main.cpp.o -o ../../bin/sam  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../../src/libggml.so ../libcommon.a ../../src/libggml-cpu.so ../../src/libggml-base.so 

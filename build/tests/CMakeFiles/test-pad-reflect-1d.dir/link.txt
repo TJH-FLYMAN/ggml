@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/test-pad-reflect-1d.dir/test-pad-reflect-1d.cpp.o" -o ../bin/test-pad-reflect-1d  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 

@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/test-conv2d.dir/test-conv2d.cpp.o" -o ../bin/test-conv2d  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 

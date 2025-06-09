@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/gpt-2-backend.dir/main-backend.cpp.o" -o ../../bin/gpt-2-backend  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../libcommon.a ../libcommon-ggml.a ../../src/libggml.so ../../src/libggml-cpu.so ../../src/libggml-base.so 

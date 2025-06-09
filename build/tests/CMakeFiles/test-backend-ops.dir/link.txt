@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/test-backend-ops.dir/test-backend-ops.cpp.o" -o ../bin/test-backend-ops  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 

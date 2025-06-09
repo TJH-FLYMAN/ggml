@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/gpt-j-quantize.dir/quantize.cpp.o" -o ../../bin/gpt-j-quantize  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../libcommon.a ../libcommon-ggml.a ../../src/libggml.so ../../src/libggml-cpu.so ../../src/libggml-base.so 

@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/test-conv-transpose-1d.dir/test-conv-transpose-1d.cpp.o" -o ../bin/test-conv-transpose-1d  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 

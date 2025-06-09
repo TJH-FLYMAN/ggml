@@ -1,0 +1,1 @@
+/usr/bin/c++ -g "CMakeFiles/test-opt.dir/test-opt.cpp.o" -o ../bin/test-opt  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 
