@@ -1,1 +1,0 @@
-/usr/bin/c++ -g "CMakeFiles/simple-ctx.dir/simple-ctx.cpp.o" -o ../../bin/simple-ctx  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../../src/libggml.so ../../src/libggml-cpu.so ../../src/libggml-base.so 

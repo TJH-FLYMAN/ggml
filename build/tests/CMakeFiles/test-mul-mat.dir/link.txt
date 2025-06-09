@@ -1,1 +1,0 @@
-/usr/bin/c++ -g "CMakeFiles/test-mul-mat.dir/test-mul-mat.cpp.o" -o ../bin/test-mul-mat  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 

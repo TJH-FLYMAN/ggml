@@ -1,1 +1,0 @@
-/usr/bin/c++ -g "CMakeFiles/yolov3-tiny.dir/yolov3-tiny.cpp.o" "CMakeFiles/yolov3-tiny.dir/yolo-image.cpp.o" -o ../../bin/yolov3-tiny  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../../src/libggml.so ../libcommon.a ../../src/libggml-cpu.so ../../src/libggml-base.so 

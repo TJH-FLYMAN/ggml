@@ -1,1 +1,0 @@
-/usr/bin/cc  -mavx -mavx2 -mfma -mf16c -msse3 -g "CMakeFiles/test-vec0.dir/test-vec0.c.o" -o ../bin/test-vec0  -Wl,-rpath,/home/jhtang3/ggml/ggml-master/build/src ../src/libggml.so ../src/libggml-cpu.so ../src/libggml-base.so 
