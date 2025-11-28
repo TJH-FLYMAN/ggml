@@ -1,0 +1,21 @@
+# ggml模型解析
+
+## ggml模型格式gguf 
+**参考**
+- docs/gguf.md
+- src/gguf.*
+
+**gguf-header**
+- uint32_t magic;               GGUF的ASCII码  (G = 0x47 U 0x55  F= 0x46)  magic = 0x46554747
+- uint32_t version;             GGUF版本 目前是3  0x00 0x00 0x00  0x33
+- uint64_t tensor_count;        tensor数量
+- uint64_t metadata_kv_count;   超参数量(也叫元数据),超参使用键值结构kv存储
+- gguf_metadata_kv_t metadata_kv[metadata_kv_count];    
+    key(string) value
+    value : - 非数组在内存中以gguf_type(int32_t)、value_len(uint64_t)、value 存储;
+            - 数组在内存中以gguf_type(int32_t),gguf_type(int32_t)、value_len(uint64_t)、value 存储;其中第一个type为GGUF_TYPE_ARRAY，第二个type为数组内元素类型
+- tensor_count 个tensor_info数据,以name_len（uint64 8字节）、name、dims_len（4字节）、dims[0]-dims[n]（ uint64 n个8字节）、datatype（uint32 4字节）、文件偏移量offset（uint64 8字节,偏移量32位对齐）
+- tensor数据
+
+
+cpu后端相关

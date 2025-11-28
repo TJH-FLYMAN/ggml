@@ -453,10 +453,12 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             return nullptr;
         }
         GGML_ASSERT(int64_t(ctx->kv.size()) == n_kv);
-
+        // 查找kv中GGUF_KEY_GENERAL_ALIGNMENT，存在使用alignment = value 。否侧使用默认值
         const int alignment_idx = gguf_find_key(ctx, GGUF_KEY_GENERAL_ALIGNMENT);
         ctx->alignment = alignment_idx == -1 ? GGUF_DEFAULT_ALIGNMENT : gguf_get_val_u32(ctx, alignment_idx);
-
+        // alignment 必须是2的幂次，这里位运算检测2的幂次
+        // 任何2的幂次方数n，其二进制表示只有一个bit为1，其余都是0
+        // 比如 8 的二进制 1000 ；7的二进制 0111 ；1000 & 0111  = 0000 = 0
         if (ctx->alignment == 0 || (ctx->alignment & (ctx->alignment - 1)) != 0) {
             fprintf(stderr, "%s: alignment %zu is not a power of 2\n", __func__, ctx->alignment);
             gguf_free(ctx);
