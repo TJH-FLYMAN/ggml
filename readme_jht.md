@@ -13,9 +13,14 @@
 - gguf_metadata_kv_t metadata_kv[metadata_kv_count];    
     key(string) value
     value : - 非数组在内存中以gguf_type(int32_t)、value_len(uint64_t)、value 存储;
-            - 数组在内存中以gguf_type(int32_t),gguf_type(int32_t)、value_len(uint64_t)、value 存储;其中第一个type为GGUF_TYPE_ARRAY，第二个type为数组内元素类型
+            - 数组在内存中以gguf_type(int32_t),gguf_type(int32_t，后转为ggml_type)、value_len(uint64_t)、value 存储;其中第一个type为GGUF_TYPE_ARRAY，第二个type为数组内元素类型
 - tensor_count 个tensor_info数据,以name_len（uint64 8字节）、name、dims_len（4字节）、dims[0]-dims[n]（ uint64 n个8字节）、datatype（uint32 4字节）、文件偏移量offset（uint64 8字节,偏移量32位对齐）
-- tensor数据
+- tensor_info数据  
+    name string
+    n_dim uint32_t  
+    ne[4] int64_t > n_dim 的维度 为1
+    type int32_t，后转为ggml_type(枚举类)
+    offset uint64_t  文件偏移量，从start 开始
 
 
 cpu后端相关

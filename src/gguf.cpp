@@ -489,7 +489,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             }
             ggml_set_name(&info.t, name.c_str());
 
-            // make sure there are no duplicate tensor names
+            // 确保 tensorname no duplicate
             for (int64_t j = 0; ok && j < i; ++j) {
                 if (strcmp(info.t.name, ctx->info[j].t.name) == 0) {
                     fprintf(stderr, "%s: duplicate tensor name '%s' for tensors %" PRIi64 " and %" PRIi64 "\n", __func__, info.t.name, j, i);
@@ -503,6 +503,10 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         }
 
         // tensor shape
+        // ggml采用行主序，内部 按从内到外 存储维度
+        // 支持的最大维度为4
+        // 比如一个图像批次数据，[batch_size, channels, height, width],1,3,640,640
+        // ne= [640,640,3,1]
         {
             uint32_t n_dims = -1;
             ok = ok && gr.read(n_dims);
@@ -528,6 +532,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             }
 
             // check that the total number of elements is representable
+            // 检查 shape乘积是否溢出，> INT64_MAX
             if (ok && ((INT64_MAX/info.t.ne[1] <= info.t.ne[0]) ||
                        (INT64_MAX/info.t.ne[2] <= info.t.ne[0]*info.t.ne[1]) ||
                        (INT64_MAX/info.t.ne[3] <= info.t.ne[0]*info.t.ne[1]*info.t.ne[2]))) {
@@ -554,8 +559,8 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                 ok = false;
                 break;
             }
-            const size_t  type_size = ggml_type_size(info.t.type);
-            const int64_t blck_size = ggml_blck_size(info.t.type);
+            const size_t  type_size = ggml_type_size(info.t.type);// 
+            const int64_t blck_size = ggml_blck_size(info.t.type);// 非量化元素不分块 blck_size=1
 
             // check that row size is divisible by block size
             if (blck_size == 0 || info.t.ne[0] % blck_size != 0) {
@@ -567,6 +572,11 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             }
 
             // calculate byte offsets given the tensor shape and type
+            // 获取tensor的stride信息
+            // 以fp32 shape[1,3,640,640]为例，ne= [640,640,3,1]
+            // nb[0] = sizeof(float)= 4
+            // nb[1] = sizeof(float) * 640 = 2560
+            // nb[2] = sizeof(float) * 640 * 640 = 1638400
             info.t.nb[0] = type_size;
             info.t.nb[1] = info.t.nb[0]*(info.t.ne[0]/blck_size);
             for (int j = 2; j < GGML_MAX_DIMS; ++j) {

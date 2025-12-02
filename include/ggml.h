@@ -578,10 +578,12 @@ extern "C" {
 
         struct ggml_backend_buffer * buffer;
 
-        int64_t ne[GGML_MAX_DIMS]; // number of elements
-        size_t  nb[GGML_MAX_DIMS]; // stride in bytes:
-                                   // nb[0] = ggml_type_size(type)
-                                   // nb[1] = nb[0]   * (ne[0] / ggml_blck_size(type)) + padding
+        int64_t ne[GGML_MAX_DIMS]; // number of elements 
+        size_t  nb[GGML_MAX_DIMS]; // stride in bytes, i 维上移动 1 个元素时，内存地址偏移字节数
+                                   // nb[0] = ggml_type_size(type) 最内层元素连续存储
+                                   // 第0维元素数 / 每块字节数大小 ne[0] / ggml_blck_size(type) = block ; 
+                                   // nb[0] * block + padding
+                                   // nb[1] = nb[0]   * (ne[0] / ggml_blck_size(type)) + padding 
                                    // nb[i] = nb[i-1] * ne[i-1]
 
         // compute data

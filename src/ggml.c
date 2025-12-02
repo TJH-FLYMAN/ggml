@@ -1168,11 +1168,11 @@ size_t ggml_nbytes(const struct ggml_tensor * tensor) {
 size_t ggml_nbytes_pad(const struct ggml_tensor * tensor) {
     return GGML_PAD(ggml_nbytes(tensor), GGML_MEM_ALIGN);
 }
-
+// ggml_blck_size 表示量化的块的大小(对float为1，q4_0为32)
 int64_t ggml_blck_size(enum ggml_type type) {
     return type_traits[type].blck_size;
 }
-
+// 表示元素类型对应字节数，i8 1字节 fp32 4字节
 size_t ggml_type_size(enum ggml_type type) {
     return type_traits[type].type_size;
 }
