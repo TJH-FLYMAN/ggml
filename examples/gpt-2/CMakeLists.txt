@@ -17,6 +17,9 @@ set(TEST_TARGET gpt-2-sched)
 add_executable(${TEST_TARGET} main-sched.cpp)
 target_link_libraries(${TEST_TARGET} PRIVATE ggml common common-ggml)
 
+set(TEST_TARGET gpt-2-parse)
+add_executable(${TEST_TARGET} parse_head.cpp)
+target_link_libraries(${TEST_TARGET} PRIVATE ggml common common-ggml)
 #
 # gpt-2-quantize
 

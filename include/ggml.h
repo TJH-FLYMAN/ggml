@@ -242,7 +242,7 @@
 #define GGML_ROPE_TYPE_VISION 24
 
 #define GGML_UNUSED(x) (void)(x)
-
+// 向上对齐到n的整数倍
 #define GGML_PAD(x, n) (((x) + (n) - 1) & ~((n) - 1))
 
 #ifndef NDEBUG

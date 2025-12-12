@@ -289,7 +289,7 @@ struct gguf_reader {
 struct gguf_context * gguf_init_empty(void) {
     return new gguf_context;
 }
-
+// 根据 type len 读取value,构建(key,value)添加gguf_context.kv队列中
 template<typename T>
 bool gguf_read_emplace_helper(const struct gguf_reader & gr, std::vector<struct gguf_kv> & kv, const std::string & key, const bool is_array, const size_t n) {
     if (is_array) {
@@ -405,6 +405,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                 fprintf(stderr, "%s: encountered bad_alloc error while reading key %" PRIi64 "\n", __func__, i);
                 ok = false;
             }
+            // 确保 key no duplicate
             for (size_t j = 0; ok && j < ctx->kv.size(); ++j) {
                 if (key == ctx->kv[j].key) {
                     fprintf(stderr, "%s: duplicate key '%s' for tensors %zu and %" PRIi64 " \n", __func__, key.c_str(), j, i);
@@ -516,6 +517,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                 ok = false;
                 break;
             }
+            //默认 ne[:] = 1
             for (uint32_t j = 0; ok && j < GGML_MAX_DIMS; ++j) {
                 info.t.ne[j] = 1;
                 if (j < n_dims) {
@@ -600,7 +602,8 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
     }
     GGML_ASSERT(int64_t(ctx->info.size()) == n_tensors);
 
-    // we require the data section to be aligned, so take into account any padding
+    // 每个tensor的info信息存储都是alignment个字节对齐
+    // 检查read offset的位置,文件位置指针偏移后移到alignment个字节对齐位置
     if (fseek(file, GGML_PAD(ftell(file), ctx->alignment), SEEK_SET) != 0) {
         fprintf(stderr, "%s: failed to seek to beginning of data section\n", __func__);
         gguf_free(ctx);
@@ -608,6 +611,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
     }
 
     // store the current file offset - this is where the data section starts
+    // data段的偏移量
     ctx->offset = ftell(file);
 
     // compute the total size of the data section, taking into account the alignment

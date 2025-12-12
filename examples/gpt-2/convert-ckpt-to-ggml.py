@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 # Convert a model checkpoint to a ggml compatible file
 #
 # Load the model using TensorFlow.
@@ -110,7 +112,7 @@ for name, shape in list_vars:
     print("Processing variable: " + name + " with shape: ", shape)
 
     data = tf.train.load_variable(dir_model, name).squeeze()
-    n_dims = len(data.shape);
+    n_dims = len(data.shape)
 
     # for efficiency - transpose the projection matrices
     # "model/h.*/attn/c_attn/w"
@@ -148,7 +150,7 @@ for name, shape in list_vars:
     fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
     for i in range(n_dims):
         fout.write(struct.pack("i", dshape[n_dims - 1 - i]))
-    fout.write(str);
+    fout.write(str)
 
     # data
     data.tofile(fout)
