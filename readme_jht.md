@@ -9,7 +9,7 @@
 - uint32_t magic;               GGUF的ASCII码  (G = 0x47 U 0x55  F= 0x46)  magic = 0x46554747
 - uint32_t version;             GGUF版本 目前是3  0x00 0x00 0x00  0x33
 - uint64_t tensor_count;        tensor数量
-- uint64_t metadata_kv_count;   超参数量(也叫元数据),超参使用键值结构kv存储
+- uint64_t metadata_kv_count;   metadata使用键值结构kv存储
 - gguf_metadata_kv_t metadata_kv[metadata_kv_count];    
     key(string)
     value : - 非数组在内存中以gguf_type(int32_t)、value_len(uint64_t)、value 存储;

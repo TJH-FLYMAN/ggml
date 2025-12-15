@@ -504,7 +504,8 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         }
 
         // tensor shape
-        // ggml采用行主序，内部 按从内到外 存储维度
+        // PyTorch等框架从最外到最内表示维度, ggml从内到外表示维度
+        // ggml采用行主序。也就是内存上连续的维度为ne[0].
         // 支持的最大维度为4
         // 比如一个图像批次数据，[batch_size, channels, height, width],1,3,640,640
         // ne= [640,640,3,1]
@@ -637,6 +638,8 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         //   the ggml_tensor structs to the appropriate locations in the binary blob
 
         // compute the exact size needed for the new ggml_context
+        // ggml_tensor_overhead = 1 tensor meta data  = 2 struct size ,object_meta + tensor_meta
+        // + 1指链表头节点,模型权重
         const size_t mem_size =
             params.no_alloc ?
             (n_tensors    )*ggml_tensor_overhead() :
@@ -658,10 +661,9 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         struct ggml_context * ctx_data = *params.ctx;
 
         struct ggml_tensor * data = nullptr;
-
+        // 分配了ctx->size内存，读数据到ctx中
         if (!params.no_alloc) {
             data = ggml_new_tensor_1d(ctx_data, GGML_TYPE_I8, ctx->size);
-
             ok = ok && data != nullptr;
 
             // read the binary blob with the tensor data
@@ -678,6 +680,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             ctx->data = data->data;
         }
 
+        // 上面已经分配内存，下面只创建meta数据
         ggml_set_no_alloc(ctx_data, true);
 
         // create the tensors
@@ -693,7 +696,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             }
 
             ggml_set_name(cur, info.t.name);
-
+            // ggml_tensor.data根据offset指向第一个obj的data区域适当位置
             // point the data member to the appropriate location in the binary blob using the tensor info
             if (!params.no_alloc) {
                 cur->data = (char *) data->data + info.offset;

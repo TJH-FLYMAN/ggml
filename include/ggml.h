@@ -626,7 +626,7 @@ extern "C" {
     typedef ggml_guid * ggml_guid_t;
 
     GGML_API bool ggml_guid_matches(ggml_guid_t guid_a, ggml_guid_t guid_b);
-
+    
     // misc
 
     GGML_API void    ggml_time_init(void); // call this once at the beginning of the program

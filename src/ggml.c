@@ -1502,11 +1502,11 @@ size_t ggml_get_max_tensor_size(const struct ggml_context * ctx) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-
+// 详见docs/ggml_new_object.jpg         obj_cur = obj1 ; obj_new = obj2
 static struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml_object_type type, size_t size) {
     // always insert objects at the end of the context's memory pool
     struct ggml_object * obj_cur = ctx->objects_end;
-
+    
     const size_t cur_offs = obj_cur == NULL ? 0 : obj_cur->offs;
     const size_t cur_size = obj_cur == NULL ? 0 : obj_cur->size;
     const size_t cur_end  = cur_offs + cur_size;
@@ -1545,7 +1545,7 @@ static struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml
     ctx->objects_end = obj_new;
 
     //printf("%s: inserted new object at %zu, size = %zu\n", __func__, cur_end, obj_new->size);
-
+    
     return obj_new;
 }
 
@@ -1587,7 +1587,7 @@ static struct ggml_tensor * ggml_new_tensor_impl(
 
     struct ggml_object * const obj_new = ggml_new_object(ctx, GGML_OBJECT_TYPE_TENSOR, GGML_TENSOR_SIZE + obj_alloc_size);
     GGML_ASSERT(obj_new);
-
+    
     struct ggml_tensor * const result = (struct ggml_tensor *)((char *)ctx->mem_buffer + obj_new->offs);
 
     *result = (struct ggml_tensor) {

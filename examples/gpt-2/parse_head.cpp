@@ -55,6 +55,8 @@ static bool load_model(std::string & fname, gpt_model & model) {
     printf("gguf alignment = %zu\n", alignment);
     printf("gguf data offset = %zu\n", data_offset);
     printf("gguf n_kv = %ld\n", n_kv);
+
+#if 0
     for(int64_t i = 0; i < n_kv; i++){
         std::string key = gguf_get_key(gguf_ctx, i);
         printf(" key[%ld] = %s\n", i, key.c_str());
@@ -192,7 +194,7 @@ static bool load_model(std::string & fname, gpt_model & model) {
         }
         printf("\n");
     }
-
+#endif
 
     int num_tensors = gguf_get_n_tensors(gguf_ctx);
     struct ggml_init_params params {
@@ -216,6 +218,8 @@ static bool load_model(std::string & fname, gpt_model & model) {
         ggml_backend_tensor_set(cur, ggml_get_data(src), 0, n_size);
     }
     
+    // ggml_show_object(model.ctx);
+
     gguf_free(gguf_ctx);
     return true;
 }
