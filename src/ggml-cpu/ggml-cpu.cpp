@@ -612,6 +612,7 @@ static const struct ggml_backend_reg_i ggml_backend_cpu_reg_i = {
     /* .get_proc_address = */ ggml_backend_cpu_get_proc_address,
 };
 
+// 注册cpu后端
 ggml_backend_reg_t ggml_backend_cpu_reg(void) {
     // init CPU feature detection
     ggml_cpu_init();

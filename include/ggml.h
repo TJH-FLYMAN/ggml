@@ -574,33 +574,31 @@ extern "C" {
 
     // n-dimensional tensor
     struct ggml_tensor {
-        enum ggml_type type;
+        enum ggml_type type; //tensor的数据类型
 
-        struct ggml_backend_buffer * buffer;
+        struct ggml_backend_buffer * buffer; //指向能够管理、操作Tensor对应的数据区域的buffer接口
 
         int64_t ne[GGML_MAX_DIMS]; // number of elements 
         size_t  nb[GGML_MAX_DIMS]; // stride in bytes, i 维上移动 1 个元素时，内存地址偏移字节数
-                                   // nb[0] = ggml_type_size(type) 最内层元素连续存储
-                                   // 第0维元素数 / 每块字节数大小 ne[0] / ggml_blck_size(type) = block ; 
-                                   // nb[0] * block + padding
-                                   // nb[1] = nb[0]   * (ne[0] / ggml_blck_size(type)) + padding 
-                                   // nb[i] = nb[i-1] * ne[i-1]
 
         // compute data
-        enum ggml_op op;
+        enum ggml_op op; //tensor在计算时，需要执行的操作算子
 
         // op params - allocated as int32_t for alignment
-        int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
+        int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)]; //op操作所需要的参数
 
         int32_t flags;
 
-        struct ggml_tensor * src[GGML_MAX_SRC];
+        struct ggml_tensor * src[GGML_MAX_SRC]; //计算时所需要的源数据tensor
 
         // source tensor and offset for views
-        struct ggml_tensor * view_src;
-        size_t               view_offs;
+        struct ggml_tensor * view_src;  // tensor不分配自己内存，引用另一个张量的内存。view_src指向实际持有内存的张量
+                                        // 比如ggml_cpy，从a copy到 b. b不分配内存，使用a内存，
+                                        // 计算图中a b 被表示为不同的张量 . 视图张量的形状总是小于或等于原始张量
+        size_t               view_offs; // view_offs , 比如tensor_qkv通过一个linear计算得到，分开的q k v通过view_offs在tensor_qkv中偏移获取
+                                        // 使用参考 examples/gpt-2/main-ctx.cpp:485-487
 
-        void * data;
+        void * data; //tensor对应实际数据的地址
 
         char name[GGML_MAX_NAME];
 

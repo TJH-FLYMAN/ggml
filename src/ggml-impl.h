@@ -292,7 +292,8 @@ struct ggml_cgraph {
     struct ggml_tensor ** nodes;     // tensors with data that can change if the graph is evaluated
     struct ggml_tensor ** grads;     // the outputs of these tensors are the gradients of the nodes
     struct ggml_tensor ** grad_accs; // accumulators for node gradients
-    struct ggml_tensor ** leafs;     // tensors with constant data
+    struct ggml_tensor ** leafs;     // tensors with constant data , leaf指不依赖其他张量运算结果的输入张量
+                                     // leaf通常指weight、输入数据、常量张量
 
     struct ggml_hash_set visited_hash_set;
 

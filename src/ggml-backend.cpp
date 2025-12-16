@@ -204,7 +204,7 @@ const char * ggml_backend_name(ggml_backend_t backend) {
     }
     return backend->iface.get_name(backend);
 }
-
+// 释放后端资源
 void ggml_backend_free(ggml_backend_t backend) {
     if (backend == NULL) {
         return;
@@ -321,7 +321,7 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
 
     return backend->iface.graph_plan_compute(backend, plan);
 }
-
+// 指定backend执行计算graph
 enum ggml_status ggml_backend_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph);
     ggml_backend_synchronize(backend);
@@ -627,7 +627,7 @@ struct ggml_backend_sched_split {
     // graph view of this split
     struct ggml_cgraph graph;
 };
-
+// 调度器，使得多种后端可以并发使用
 struct ggml_backend_sched {
     bool is_reset; // true if the scheduler has been reset since the last graph split
     bool is_alloc;

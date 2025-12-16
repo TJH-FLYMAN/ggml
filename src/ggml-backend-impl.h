@@ -27,9 +27,9 @@ extern "C" {
         // (optional) check if tensor data is in host memory and uses standard ggml tensor layout (defaults to false)
         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
     };
-
+    // 后端缓冲区类型
     struct ggml_backend_buffer_type {
-        struct ggml_backend_buffer_type_i  iface;
+        struct ggml_backend_buffer_type_i  iface; // 接口
         ggml_backend_dev_t device;
         void * context;
     };
@@ -58,11 +58,11 @@ extern "C" {
     };
 
     struct ggml_backend_buffer {
-        struct ggml_backend_buffer_i  iface;
-        ggml_backend_buffer_type_t    buft;
-        void * context;
-        size_t size;
-        enum ggml_backend_buffer_usage usage;
+        struct ggml_backend_buffer_i  iface; //后端对buffer进行操作的接口
+        ggml_backend_buffer_type_t    buft; //buffer所属后端类型
+        void * context; //buffer实际存储数据区域地址
+        size_t size; //buffer存储数据大小 
+        enum ggml_backend_buffer_usage usage; //buffer用途： any/weight/compute
     };
 
     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
@@ -115,7 +115,7 @@ extern "C" {
         // wait for an event on on a different stream
         void (*event_wait)  (ggml_backend_t backend, ggml_backend_event_t event);
     };
-
+    // 用于描述后端meta
     struct ggml_backend {
         ggml_guid_t guid;
         struct ggml_backend_i iface;

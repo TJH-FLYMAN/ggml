@@ -479,7 +479,7 @@ bool gpt2_eval(
                     ggml_repeat(ctx0, model.layers[il].c_attn_attn_b, cur),
                     cur);
         }
-
+        
         // self-attention
         {
             struct ggml_tensor * Qcur = ggml_view_2d(ctx0, cur, n_embd, N, cur->nb[1], 0*sizeof(float)*n_embd);

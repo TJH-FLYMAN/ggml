@@ -504,11 +504,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         }
 
         // tensor shape
-        // PyTorch等框架从最外到最内表示维度, ggml从内到外表示维度
-        // ggml采用行主序。也就是内存上连续的维度为ne[0].
-        // 支持的最大维度为4
-        // 比如一个图像批次数据，[batch_size, channels, height, width],1,3,640,640
-        // ne= [640,640,3,1]
+        // 详见examples/tensor/nenb.cpp
         {
             uint32_t n_dims = -1;
             ok = ok && gr.read(n_dims);

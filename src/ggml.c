@@ -872,15 +872,15 @@ static const size_t GGML_OBJECT_SIZE = sizeof(struct ggml_object);
 //
 
 struct ggml_context {
-    size_t mem_size;
-    void * mem_buffer;
-    bool   mem_buffer_owned;
-    bool   no_alloc;
+    size_t mem_size; //context自身大小
+    void * mem_buffer; //context内存储object容器表的buffer地址
+    bool   mem_buffer_owned; //buffer是否为ctx拥有
+    bool   no_alloc; //是否禁止分配（用于共享内存模式）
 
-    int    n_objects;
+    int    n_objects; //ctx拥有的object容器数量
 
-    struct ggml_object * objects_begin;
-    struct ggml_object * objects_end;
+    struct ggml_object * objects_begin; //容器链表头
+    struct ggml_object * objects_end;//容器链表尾
 };
 
 struct ggml_context_container {
@@ -1179,6 +1179,9 @@ size_t ggml_type_size(enum ggml_type type) {
 
 size_t ggml_row_size(enum ggml_type type, int64_t ne) {
     assert(ne % ggml_blck_size(type) == 0);
+    printf("%ld\n",ggml_type_size(type));
+    printf("%ld\n",ne);
+    printf("%ld\n",ggml_blck_size(type));
     return ggml_type_size(type)*ne/ggml_blck_size(type);
 }
 
@@ -5696,7 +5699,8 @@ static void ggml_compute_backward(
     GGML_ASSERT(!src1_needs_grads || ggml_are_same_shape(src1, cgraph->grads[isrc1]));
     GGML_ASSERT(!src2_needs_grads || ggml_are_same_shape(src2, cgraph->grads[isrc2]));
 }
-
+//从存放结果张量为根节点，每个节点依赖的张量为子节点，根据计算关系逆序遍历计算图
+//遍历到的节点分别拷贝到ggml_cgraph nodes和leafs
 static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor * node) {
     // check if already visited
     if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
@@ -5734,7 +5738,7 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         cgraph->n_nodes++;
     }
 }
-
+// 递归调用ggml_visit_parents遍历计算图
 static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor, bool expand) {
     if (!expand) {
         // TODO: this branch isn't accessible anymore, maybe move this to ggml_build_forward_expand
@@ -5889,6 +5893,7 @@ size_t ggml_graph_overhead(void) {
 
 struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t size, bool grads) {
     const size_t obj_size = ggml_graph_nbytes(size, grads);
+    // ctx新建graph obj
     struct ggml_object * obj = ggml_new_object(ctx, GGML_OBJECT_TYPE_GRAPH, obj_size);
     struct ggml_cgraph * cgraph = (struct ggml_cgraph *) ((char *) ctx->mem_buffer + obj->offs);
 
@@ -5896,7 +5901,7 @@ struct ggml_cgraph * ggml_new_graph_custom(struct ggml_context * ctx, size_t siz
     size_t hash_size = ggml_hash_size(size * 2);
 
     void * p = cgraph + 1;
-
+    // graph obj后内存分配给 node、leaf、 hash， grads、grad_accs只有反向传播时分配内存
     struct ggml_tensor ** nodes_ptr     =         incr_ptr_aligned(&p, size      * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *));
     struct ggml_tensor ** leafs_ptr     =         incr_ptr_aligned(&p, size      * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *));
     struct ggml_tensor ** hash_keys_ptr =         incr_ptr_aligned(&p, hash_size * sizeof(struct ggml_tensor *), sizeof(struct ggml_tensor *));

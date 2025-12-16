@@ -14012,7 +14012,7 @@ static struct ggml_threadpool * ggml_threadpool_new_impl(
 struct ggml_threadpool * ggml_threadpool_new(struct ggml_threadpool_params * tpp) {
     return ggml_threadpool_new_impl(tpp, NULL, NULL);
 }
-
+// 根据计算图执行计算
 enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
     ggml_cpu_init();
 
@@ -14082,7 +14082,8 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
 
     return ret;
 }
-
+// 遍历计算图中各个节点的操作确定需要的线程数
+// 根据量化类型数据计算 反量化所需的额外内存大小，并初始化ggml_cplan对象
 enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
     struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads, NULL);
 

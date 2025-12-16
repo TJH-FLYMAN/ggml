@@ -29,4 +29,5 @@ offset : 读取完tensor_info数据后,当前ftell(fp) alignment对齐后为tens
 size : 根据info中的type和shape信息，计算每个tensor数据大小(每个tensor都是alignemnet字节对齐)，累加得到size
 
 
+
 cpu后端相关
