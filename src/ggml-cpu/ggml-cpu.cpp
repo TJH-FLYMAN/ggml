@@ -174,6 +174,7 @@ static const struct ggml_backend_i ggml_backend_cpu_i = {
     /* .event_wait              = */ NULL,
 };
 
+// cpu后端标识符 随机生成值 无特殊含义
 static ggml_guid_t ggml_backend_cpu_guid(void) {
     static ggml_guid guid = { 0xaa, 0x67, 0xc7, 0x43, 0x96, 0xe6, 0xa3, 0x8a, 0xe3, 0xaf, 0xea, 0x92, 0x36, 0xbc, 0xfc, 0x89 };
     return &guid;
@@ -242,7 +243,9 @@ void ggml_backend_cpu_set_abort_callback(ggml_backend_t backend_cpu, ggml_abort_
 }
 
 // CPU backend - device
-
+// linux下获取/proc/cpuinfo中的model_name信息。赋值description
+// 例如 model name      : AMD Ryzen 9 9950X 16-Core Processor
+// description = "AMD Ryzen 9 9950X 16-Core Processor"
 struct ggml_backend_cpu_device_context {
     std::string description = "CPU";
 

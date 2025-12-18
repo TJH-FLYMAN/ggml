@@ -35,7 +35,7 @@ int main () {
     // ne = [640,640,3,1]
     ggml_tensor* img_tensor = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 640, 640, 3, 1);
     // nb[0] = sizeif(fp32) = 4  第1个640维度上idx+1 需要指针偏移4字节，一行上右移
-    // nb[1] = sizeif(fp32) * ne[0] = 4 * 640 = 2560  第2个640维度上idx+1 需要指针偏移完第一个维度上所有元素4字节。从当前行的idx移动到下一行的idx。
+    // nb[1] = sizeif(fp32) * ne[0] = 4 * 640 = 2560  第2个640维度上idx+1 需要指针偏移完第一个维度上所有元素。从当前行的idx移动到下一行的idx。
     // nb[2] = sizeif(fp32) * ne[0] * ne[1] = nb[1] * ne[1]  =  2560 * 640 = 1638400    channel +1的对应位置
     // nb[3] = sizeif(fp32) * ne[0] * ne[1] * ne[2] = nb[2] * ne[2] = 1,638,400 * 3 = 4915200  batch + 1的对应位置
     // nb[i] = nb[i-1] * ne[i]

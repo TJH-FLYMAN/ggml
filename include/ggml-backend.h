@@ -132,6 +132,8 @@ extern "C" {
         GGML_BACKEND_DEVICE_TYPE_CPU,
         // GPU device using dedicated memory
         GGML_BACKEND_DEVICE_TYPE_GPU,
+        // NPU device using dedicated memory
+        GGML_BACKEND_DEVICE_TYPE_NPU,
         // accelerator devices intended to be used together with the CPU backend (e.g. BLAS or AMX)
         GGML_BACKEND_DEVICE_TYPE_ACCEL
     };
