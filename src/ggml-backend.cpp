@@ -562,7 +562,7 @@ static const struct ggml_backend_buffer_i ggml_backend_multi_buffer_i = {
     /* .clear           = */ ggml_backend_multi_buffer_clear,
     /* .reset           = */ NULL,
 };
-
+// 多个ggml_backend_buffer_t组合到一个ggml_backend_buffer_t中，ctx中保存
 ggml_backend_buffer_t ggml_backend_multi_buffer_alloc_buffer(ggml_backend_buffer_t * buffers, size_t n_buffers) {
     ggml_backend_multi_buffer_context * ctx = (ggml_backend_multi_buffer_context *) malloc(sizeof(struct ggml_backend_multi_buffer_context));
     ctx->n_buffers = n_buffers;

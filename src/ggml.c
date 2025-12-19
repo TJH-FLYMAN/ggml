@@ -1508,16 +1508,17 @@ size_t ggml_get_max_tensor_size(const struct ggml_context * ctx) {
 // 详见docs/ggml_new_object.jpg         obj_cur = obj1 ; obj_new = obj2
 static struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml_object_type type, size_t size) {
     // always insert objects at the end of the context's memory pool
+    // 获取上一个链表
     struct ggml_object * obj_cur = ctx->objects_end;
     
     const size_t cur_offs = obj_cur == NULL ? 0 : obj_cur->offs;
     const size_t cur_size = obj_cur == NULL ? 0 : obj_cur->size;
-    const size_t cur_end  = cur_offs + cur_size;
+    const size_t cur_end  = cur_offs + cur_size; //绝对偏移 + 当前size  = 当前object的偏移
 
     // align to GGML_MEM_ALIGN
     size_t size_needed = GGML_PAD(size, GGML_MEM_ALIGN);
 
-    char * const mem_buffer = ctx->mem_buffer;
+    char * const mem_buffer = ctx->mem_buffer; //内存池指针
     struct ggml_object * const obj_new = (struct ggml_object *)(mem_buffer + cur_end);
 
     if (cur_end + size_needed + GGML_OBJECT_SIZE > ctx->mem_size) {
@@ -1530,7 +1531,7 @@ static struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml
     }
 
     *obj_new = (struct ggml_object) {
-        .offs = cur_end + GGML_OBJECT_SIZE,
+        .offs = cur_end + GGML_OBJECT_SIZE, // offs 指 struct ggml_tensor起始位置
         .size = size_needed,
         .next = NULL,
         .type = type,

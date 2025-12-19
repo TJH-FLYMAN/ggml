@@ -966,20 +966,22 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
 
     return true;
 }
-
+//从给定的 ggml_context 中为尚未分配内存的张量分配内存，使用指定的缓冲区类型(buft)
 ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
     GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
 
     size_t alignment = ggml_backend_buft_get_alignment(buft);
-    size_t max_size = ggml_backend_buft_get_max_size(buft);
+    size_t max_size = ggml_backend_buft_get_max_size(buft); //单个缓冲区允许的最大size
 
-    ggml_backend_buffer_t * buffers = NULL;
+    ggml_backend_buffer_t * buffers = NULL;// 动态数组buffers保存创建的buf
     size_t n_buffers = 0;
 
-    size_t cur_buf_size = 0;
+    size_t cur_buf_size = 0;// 累计当前正在计划分配到同一个缓冲区中的张量所需的总大小
     struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+
+    //遍历tensorinfo
     for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) {
-        size_t this_size = 0;
+        size_t this_size = 0;// align后的大小
         if (t->data == NULL && t->view_src == NULL) {
             this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
         }
@@ -995,7 +997,7 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
             free(buffers);
             return NULL;
         }
-
+        //a+b的大小超过单个buft的大小，alloc一个新buf
         if ((cur_buf_size + this_size) > max_size) {
             // allocate tensors in the current buffer
             if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
@@ -1004,11 +1006,12 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
             first = t;
             cur_buf_size = this_size;
         } else {
-            cur_buf_size += this_size;
+            cur_buf_size += this_size; //a+b共享一个buft
         }
     }
 
-    // allocate remaining tensors
+    // allocate remaining tensors。
+    // tensor遍历完后，最后一组张量没有触发“超过最大尺寸”的条件。未分配，需要手动分配
     if (cur_buf_size > 0) {
         if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
             return NULL;
@@ -1021,7 +1024,7 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
 #endif
         return NULL;
     }
-
+    // 组合buffers，返回ggml_backend_buffer_t
     ggml_backend_buffer_t buffer;
     if (n_buffers == 1) {
         buffer = buffers[0];
