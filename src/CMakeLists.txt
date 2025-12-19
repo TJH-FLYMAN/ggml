@@ -251,15 +251,15 @@ function(ggml_add_backend_library backend)
         target_compile_definitions(${backend} PUBLIC  GGML_BACKEND_SHARED)
     endif()
 endfunction()
-
+# 后端添加函数 以backend = CPU为例
 function(ggml_add_backend backend)
-    string(TOUPPER "GGML_${backend}" backend_id)
-    if (${backend_id})
-        string(TOLOWER "ggml-${backend}" backend_target)
-        add_subdirectory(${backend_target})
+    string(TOUPPER "GGML_${backend}" backend_id) # GGML_CPU
+    if (${backend_id}) # 根目录下的GGML_CPU option是否set为ON
+        string(TOLOWER "ggml-${backend}" backend_target) # ggml-cpu
+        add_subdirectory(${backend_target})  # 添加 ggml-cpu 子目录
         message(STATUS "Including ${backend} backend")
         if (NOT GGML_BACKEND_DL)
-            string(TOUPPER "GGML_USE_${backend}" backend_use)
+            string(TOUPPER "GGML_USE_${backend}" backend_use) # 编译选项 GGML_USE_CPU
             target_compile_definitions(ggml PUBLIC ${backend_use})
         endif()
     endif()
@@ -276,13 +276,13 @@ function(ggml_add_cpu_backend_variant tag_name)
     endforeach()
 
     foreach (feat ${ARGN})
-        set(GGML_${feat} ON)
+        set(GGML_${feat} ON) 
     endforeach()
 
     ggml_add_cpu_backend_variant_impl(${tag_name})
 endfunction()
 
-ggml_add_backend(CPU)
+ggml_add_backend(CPU)  # 添加cpu后端
 
 if (GGML_CPU_ALL_VARIANTS)
     if (NOT GGML_BACKEND_DL)

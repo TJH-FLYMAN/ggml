@@ -460,7 +460,7 @@ static std::wstring get_executable_path() {
     return {};
 #endif
 }
-
+// L"libggml-" in linux
 static std::wstring backend_filename_prefix() {
 #ifdef _WIN32
     return L"ggml-";
@@ -485,14 +485,34 @@ static std::wstring path_separator() {
 #endif
 }
 
+/**
+ * @brief 在指定路径中查找并加载最适合的后端库
+ * 
+ * 此函数会在给定的搜索路径或者默认路径(./ exec_path)中查找匹配特定名称(libggml-{name}-*.so or libggml-{name}-*.dll)的后端库
+ * dlopen库获取ggml_backend_score。每个库一个score值。根据max_score确认best_backend
+ * 
+ * @param name 后端名称（例如 "cuda", "metal" 等）
+ * @param silent 是否以静默模式运行（true表示不输出错误信息）
+ * @param user_search_path 用户指定的搜索路径，若为nullptr则使用默认路径（当前目录和可执行文件所在目录）
+ * @return 成功时返回已加载后端的注册信息指针，失败时返回nullptr
+ * 
+ * @details
+ * 1. 构建文件名前缀和搜索路径列表
+ * 2. 遍历所有搜索路径，寻找符合命名规则的动态库文件
+ * 3. 对每个找到的库，调用其 ggml_backend_score 函数进行评分
+ * 4. 选择评分最高的库进行加载
+ * 5. 如果没有找到评分高于0的库，则尝试加载基础版本（不带后缀的版本）
+ * 
+ * @note 此函数支持跨平台，能正确处理Windows和Unix-like系统的路径及动态库格式差异
+ */
 static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent, const char * user_search_path) {
     // enumerate all the files that match [lib]ggml-name-*.[so|dll] in the search paths
      // TODO: search system paths
-    std::wstring file_prefix = backend_filename_prefix() + utf8_to_utf16(name) + L"-";
+    std::wstring file_prefix = backend_filename_prefix() + utf8_to_utf16(name) + L"-"; // libggml-{name}-
     std::vector<std::wstring> search_paths;
     if (user_search_path == nullptr) {
-        search_paths.push_back(L"." + path_separator());
-        search_paths.push_back(get_executable_path());
+        search_paths.push_back(L"." + path_separator()); 
+        search_paths.push_back(get_executable_path());  
     } else {
         search_paths.push_back(utf8_to_utf16(user_search_path) + path_separator());
     }
@@ -510,6 +530,7 @@ static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent,
             if (entry.is_regular_file()) {
                 std::wstring filename = entry.path().filename().wstring();
                 std::wstring ext = entry.path().extension().wstring();
+                // libggml-{name}-*.so or libggml-{name}-*.dll 文件
                 if (filename.find(file_prefix) == 0 && ext == backend_filename_suffix()) {
                     dl_handle_ptr handle { dl_load_library(entry.path().wstring()) };
                     if (!handle && !silent) {
