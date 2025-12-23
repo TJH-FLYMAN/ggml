@@ -357,10 +357,10 @@ struct node_alloc {
 };
 
 struct ggml_gallocr {
-    ggml_backend_buffer_type_t * bufts; // [n_buffers]
-    ggml_backend_buffer_t * buffers; // [n_buffers]
-    struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers]
-    int n_buffers;
+    ggml_backend_buffer_type_t * bufts; // [n_buffers] 缓冲区分配器
+    ggml_backend_buffer_t * buffers; // [n_buffers]  实际缓冲区数组
+    struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers] 动态分配器数组
+    int n_buffers; // 缓冲区数量
 
     struct ggml_hash_set hash_set;
     struct hash_node * hash_values; // [hash_set.size]

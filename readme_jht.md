@@ -63,7 +63,7 @@ if(no_alloc = false)
 ### 3.ggml_backend
 在介绍后端之前，先介绍后端注册表  
 
-**ggml_backend_reg**  
+**3.1 ggml_backend_reg**   
 参考src/ggml-backend-reg.cpp  
 - get_reg()返回全局注册表 , static ggml_backend_registry对象用于操作后端(reg load unload) 
 - ggml_backend_registry定义register_backend() register_device()函数用于注册后端和设备
@@ -71,16 +71,16 @@ if(no_alloc = false)
 - 通过backend遍历遍历后端设备返回static ggml_backend_device对象插入devices容器中(一种后端允许多个device，例如多卡gpu)
 
 具体实现:
-register_backend(ggml_backend_*_reg()) register_backend中调用register_device
+register_backend(ggml_backend_*_reg()) register_backend中调用register_device  
+  
+使用:  
+ggml-backend-reg.cpp中定义了一些接口ggml_backend_reg_count \ ggml_backend_dev_count 等调用get_reg  
+get_reg构造函数根据编译配置自动完成后端、设备注册  
 
-使用:
-ggml-backend-reg.cpp中定义了一些接口ggml_backend_reg_count \ ggml_backend_dev_count 等调用get_reg
-get_reg构造函数根据编译配置自动完成后端、设备注册
-
-**ggml_backend**
+***3.2 ggml_backend**  
 ggml_backend根据已注册的backend进行初始化，并返回ggml_backend对象
 
-**ggml_backend_cpu**
+***3.3 ggml_backend_cpu**  
 
 获取cpubackend
 ```c
@@ -102,7 +102,10 @@ ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
 ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr); 
 ```
 
-**ggml_bakcend_buffer**
+**3.4 ggml_backend_buffer_type**
+buffer_type可以理解为一个类型描述符（buffer descriptor）, 只描述内存类型、内存对齐和device上的如何alloc
+
+**3.5 ggml_backend_buffer**
 ggml中一切数据（context、dataset、weight、output…）都被存放在 buffer 中。ggml使用buffer进行集成承载不同的数据，实现多种后端（CPU、GPU）设备内存的统一管理。**ggml_backend_buffer**是实现不同类型数据在多种后端上进行统一的接口对象
 - struct ggml_backend_buffer_i  iface; 后端对buffer进行操作的接口 
 - ggml_backend_buffer_type_t    buft; buffer所属后端类型
@@ -111,7 +114,7 @@ ggml中一切数据（context、dataset、weight、output…）都被存放在 b
 - enum ggml_backend_buffer_usage usage; buffer用途，any通用/weight权重数据/compute计算数据
 
 
-获取cpu后端的ggml_bakcend_buffer
+获取cpu后端的ggml_backend_buffer
 ```c
 ggml_backend_t backend = ggml_backend_cpu_init();//backend
 struct ggml_init_params pdata = {  
@@ -131,3 +134,15 @@ ggml_backend_buffer_type_t buftptet  = ggml_backend_get_default_buffer_type(back
 ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors_from_buft(ggml_ctx,buftptet) 
 /*
 ```
+
+### 4.ggml_cgraph
+graph的构建有两个步骤
+- 使用算子函数连接weight参数、创建中间计算节点  
+- 使用ggml_build_forward_expand()函数构建计算图
+
+以examples/gpt-2为例:
+
+
+
+### 5.ggml_schedule
+分配计算节点实际计算

@@ -5705,23 +5705,24 @@ static void ggml_compute_backward(
 static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor * node) {
     // check if already visited
     if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
-        return;
+        return; // 该节点已经有策略了，使用 `visited_hash_set` 做 visited check，避免重复访问。（类似于DFS的visited）
     }
-
+    // 遍历所有输入节点（父节点）
     for (int i = 0; i < GGML_MAX_SRC; ++i) {
         const int k =
             (cgraph->order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :
             (cgraph->order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) :
             /* unknown order, just fall back to using i*/ i;
-        if (node->src[k]) {
-            ggml_visit_parents(cgraph, node->src[k]);
+        if (node->src[k]) { //node->src[k] 是该节点的第 k 个输入
+            ggml_visit_parents(cgraph, node->src[k]); // 递归
         }
     }
-
+    // 如果 op == NONE 且不是参数（param），说明这是常量或中间输入，不会参与梯度计算，视为 叶子节点
+    // 加入 cgraph->leafs[] 或 cgraph->nodes[]
     if (node->op == GGML_OP_NONE && !(node->flags & GGML_TENSOR_FLAG_PARAM)) {
         // reached a leaf node, not part of the gradient graph (e.g. a constant)
         GGML_ASSERT(cgraph->n_leafs < cgraph->size);
-
+        // 如果该 tensor 没有名字，会给一个默认名如 "leaf_0"、"node_1"
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "leaf_%d", cgraph->n_leafs);
         }
@@ -5739,8 +5740,9 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         cgraph->n_nodes++;
     }
 }
-// 递归调用ggml_visit_parents遍历计算图
+// 从res_tensor出发,逆序递归调用ggml_visit_parents遍历计算图
 static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor, bool expand) {
+    printf("ggml_build_forward_expand: %s\n", tensor->name);
     if (!expand) {
         // TODO: this branch isn't accessible anymore, maybe move this to ggml_build_forward_expand
         ggml_graph_clear(cgraph);
