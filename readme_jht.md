@@ -10,55 +10,94 @@ ggml_backend_buffer: 表示一个通过 buffer_type 分配的缓存。需要注�
 ggml_gallocr: 表示一个给计算图分配内存的分配器，可以给计算图中的张量进行高效的内存分配。  
 ggml_backend_sched: 后端调度器，使得多种后端可以并发使用，大模型或多 GPU 推理时，实现跨硬件平台地分配计算任务 (CPU 加 GPU 混合计算、CPU和NPU混合计算)。调度器还能自动将 GPU 不支持的算子转移到 CPU 上，来确保最优的资源利用和兼容性。  
 
-### 1.gguf 
-**参考**
-- docs/gguf.md
-- src/gguf.*
+## 1. GGUF
+gguf模型解析，保存到gguf_context
+### GGUF文件结构
+```
+[Header] -> [Metadata] -> [Tensor Info] -> [Tensor Data]
+```
+**gguf-header**  
+- magic;           GGUF的ASCII码 0x46554747  
+- version;         GGUF版本 目前是3  
+- n_tensor;        tensor数量  
+- n_kv;            metadata数量(kv对数量)    
 
-**gguf-header**
-- uint32_t magic;               GGUF的ASCII码  (G = 0x47 U 0x55  F= 0x46)  magic = 0x46554747
-- uint32_t version;             GGUF版本 目前是3  0x00 0x00 0x00  0x33
-- uint64_t tensor_count;        tensor数量
-- uint64_t metadata_kv_count;   metadata使用键值结构kv存储
-- gguf_metadata_kv_t metadata_kv[metadata_kv_count];    
-    key(string)
-    value : - 非数组在内存中以gguf_type(int32_t)、value_len(uint64_t)、value 存储;
-            - 数组在内存中以gguf_type(int32_t),gguf_type(int32_t，后转为ggml_type)、value_len(uint64_t)、value 存储;其中第一个type为GGUF_TYPE_ARRAY，第二个type为数组内元素类型
-- tensor_count 个tensor_info数据,以name_len（uint64 8字节）、name、dims_len（4字节）、dims[0]-dims[n]（ uint64 n个8字节）、datatype（uint32 4字节）、文件偏移量offset（uint64 8字节,偏移量32位对齐）
-- tensor_info数据  
-    name string
-    n_dim uint32_t  
-    ne[4] int64_t  > n_dim 的维度 为1
-    type int32_t，后转为ggml_type(枚举类)
-    offset uint64_t  文件偏移量，从start 开始
+**metadata**  
+- gguf_metadata_kv_t metadata_kv[metadata_kv_count];      
+key(string)  
+value   
+    a. NO_array元素在内存中gguf_type(int32_t)、value_len(uint64_t)、value   
+    b. array在内存中GGUF_TYPE_ARRAY,gguf_type(int32_t)、value_len、value;gguf_type指数组内元素类型  
 
-**gguf_context**
-offset : 读取完tensor_info数据后,当前ftell(fp) alignment对齐后为tensor数据offset;
-size : 根据info中的type和shape信息，计算每个tensor数据大小(每个tensor都是alignemnet字节对齐)，累加得到size
+**tensor_info**   
+- name_len(uint64) + name(string) 
+- n_dims(4字节)  
+- dims[4](uint64)、
+- datatype(uint32)、  
+- offset(uint64,偏移量32位对齐)  
 
-### 2.ggml_context 
+**Tensor_Data**  
+- offset : 读取完tensor_info数据后,ftell(fp)结果alignment对齐后为tensor数据部分的offset;  
+- size :  single_tensor_size = sizeof(datatype) * np.prod(dims), 结果alignemnet字节对齐。遍历tensor累加得到size  
+
+**gguf_context**  
+head(version) + metadata + tensor_info + Tensor_Data.offset + Tensor_Data.size + alignment + data= gguf_context    
+
+
+**gguf模型加载**    
+```c
+// 1. 根据model path 创建gguf_context
+std::string model_fname = "model.gguf";
+struct ggml_context * tmp_ctx = nullptr;
+struct gguf_init_params gguf_params = {
+    /*.no_alloc   =*/ false,
+    /*.ctx        =*/ &tmp_ctx,
+};
+// no_alloc = false时会为tensor和weight分配内存，其中ggml_ctx.mem_buffer_owned = true
+gguf_context * gguf_ctx = gguf_init_from_file(model_fname.c_str(), gguf_params);
+
+// 2. 创建空gguf_context
+gguf_context * gguf_ctx = gguf_init_empty();
+```
+
+**gguf_init_from_file_impl**  
+1. 分配并初始化gguf_ctx  
+2. 如果gguf_params.ctx!=nullptr,初始化ggml_ctx并分配内存池，用于存储模型tensor meta数据(gguf_params.no_alloc = false时额外分配tensor内存)。 
+
+## 2.ggml_context 
 - mem_size                      模型权重大小
-            +1指 gguf_ctx->size对应的模型权重，也视为ggml_object 、tensor,并为ggml_ctx.object链表的的头节点
-- mem_buffer                    根据mem_size申请的buf
+- mem_buffer                    申请align(mem_size,64)大小的的buf
 - mem_buffer_owned              buf所有权。是否ctx拥有，或者外部传递
 - no_alloc                      是否禁止分配（用于共享内存模式）
-- n_objects                     ctx拥有的object
+- n_objects                     ctx拥有的object数量
 - objects_begin,                容器链表头
 - objects_end                   容器链表尾
 
+ctx通过链表管理所有tensor;每个tensor_data持有两个head信息，ggml_object ggml_tensor  
+model_data也视为ggml_object,并为ctx的头节点。+1 指 model_data对应的ggml_tensor  
 
 
 **ggml_new_tensor**
- - 每个tensor_data持有两个head信息，ggml_object ggml_tensor
- - 申请size + (tensor_count+1)*[sizeof(ggml_object) + sizeof(ggml_tensor)] 字节的buf。
- - model_data也视为ggml_object,并为ctx的头节点。+1 指 model_data对应的ggml_tensor
-
-if(no_alloc = false)
-    - 创建一个一维字节数组来存储整个模型的权重数据，绑定到gguf_ctx.data
-    - init并alloc一个ggml_ctx赋值给params.ctx(ggml_context** 类型)，并设置ggml_ctx.no_alloc = true.(因为已经分配好了内存)
-    - 根据gguf中获取的tensor_info ，创建并分配tensor内存，ctx通过链表管理所有tensor 
 
 
+
+**获取ggml_context**  
+```c
+// 1. 调用接口
+// no_alloc = true : 只分配tensor metadata ; 
+// no_alloc = false : 分配tensor metadata和tensor_data。并且tensor_data对应的object为ctx.objects_begin
+bool no_alloc = false;
+const size_t mem_size =
+    no_alloc ?
+    (n_tensors    )*ggml_tensor_overhead() :
+    (n_tensors + 1)*ggml_tensor_overhead() + ctx->size;// +1对应tensor_data
+struct ggml_init_params params = {
+/*mem_size   =*/ mem_size,
+/*mem_buffer =*/ nullptr,
+/*no_alloc   =*/ no_alloc,
+};
+struct ggml_context* ctx = ggml_init(params); 
+```
 
 ### 3.ggml_backend
 在介绍后端之前，先介绍后端注册表  
@@ -103,7 +142,7 @@ ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
 ```
 
 **3.4 ggml_backend_buffer_type**
-buffer_type可以理解为一个类型描述符（buffer descriptor）, 只描述内存类型、内存对齐和device上的如何alloc
+buffer_type可以理解为一个类型描述符（buffer descriptor）, 描述内存类型、内存对齐字节数和device上的如何alloc、free
 
 **3.5 ggml_backend_buffer**
 ggml中一切数据（context、dataset、weight、output…）都被存放在 buffer 中。ggml使用buffer进行集成承载不同的数据，实现多种后端（CPU、GPU）设备内存的统一管理。**ggml_backend_buffer**是实现不同类型数据在多种后端上进行统一的接口对象

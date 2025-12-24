@@ -707,7 +707,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             gguf_free(ctx);
             return nullptr;
         }
-
+        // 保持传参不变
         ggml_set_no_alloc(ctx_data, params.no_alloc);
     }
 
