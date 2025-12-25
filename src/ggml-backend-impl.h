@@ -30,7 +30,7 @@ extern "C" {
     // 后端缓冲区类型descriptor
     struct ggml_backend_buffer_type {
         struct ggml_backend_buffer_type_i  iface; // 接口
-        ggml_backend_dev_t device; // 封装了后端设备的各种具体信息
+        ggml_backend_dev_t device; // 关联的后端设备
         void * context;
     };
 
