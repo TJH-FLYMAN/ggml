@@ -98,7 +98,7 @@ void ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tenso
     talloc->offset += size;
 
     assert(((uintptr_t)addr % talloc->alignment) == 0);
-    // buf以及addr回流至tensor，并init tensor vbuf（if required)
+    // buf以及addr回流至tensor，并init tensor buf（if required)
     ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
 }
 
@@ -962,7 +962,7 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
             }
         }
     }
-
+    // 更新buffers 大小
     *buffers = realloc(*buffers, sizeof(ggml_backend_buffer_t) * (*n_buffers + 1));
     (*buffers)[(*n_buffers)++] = buffer;
 

@@ -477,8 +477,8 @@ struct ggml_cgraph * gpt2_graph(
                 struct ggml_tensor * v = ggml_view_1d(ctx, model.memory_v, N*n_embd, (ggml_element_size(model.memory_v)*n_embd)*(il*n_ctx + n_past));
 
                 ggml_build_forward_expand(gf, ggml_cpy(ctx, Kcur, k));
-                ggml_build_forward_expand(gf, ggml_cpy(ctx, Vcur, v));
             }
+            ggml_build_forward_expand(gf, ggml_cpy(ctx, Vcur, v));
 
             // Q = Qcur.contiguous().view(n_embd/n_head, n_head, N).permute(0, 2, 1, 3)
             // [64, N, 12]

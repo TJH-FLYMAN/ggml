@@ -295,9 +295,9 @@ struct ggml_cgraph {
     struct ggml_tensor ** leafs;     // tensors with constant data , leaf指不依赖其他张量运算结果的输入张量
                                      // leaf通常指weight、输入数据、常量张量
 
-    struct ggml_hash_set visited_hash_set;
+    struct ggml_hash_set visited_hash_set; //跟踪已访问张量的哈希集合
 
-    enum ggml_cgraph_eval_order order;
+    enum ggml_cgraph_eval_order order; //计算图的评估顺序
 };
 
 // returns a slice of cgraph with nodes [i0, i1)

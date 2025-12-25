@@ -123,11 +123,54 @@ a.  gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr; ->ini
 b.  gguf_init_params.ctx == nullptr; 独立初始化ggml_context 。tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列  abcabcabc...abc  
 
 ## 3.ggml_cgraph
-graph的构建有两个步骤
-- 使用算子函数连接weight参数、创建中间计算节点  
+graph构建流程
+- ggml_cgraph内存分配
+- 使用算子函数连接weight参数、创建中间计算节点 ，算子函数调用不会立即执行计算
 - 使用ggml_build_forward_expand()函数构建计算图
+- 默认size = 2048
+```c
+struct ggml_cgraph {
+    int size;    // maximum number of nodes/leafs/grads/grad_accs
+    int n_nodes;    // 计算节点数
+    int n_leafs;    // 叶子节点数
+    struct ggml_tensor ** nodes;   // 计算节点，指中间运算结果 ，数组中的元素是指向tensor的指针。
+    struct ggml_tensor ** grads;     
+    struct ggml_tensor ** grad_accs; 
+    struct ggml_tensor ** leafs;    // 叶子节点，权重、常量、输入等 ，数组中的元素是指向tensor的指针。
+    struct ggml_hash_set visited_hash_set; //跟踪已访问张量的哈希集合
 
-以examples/gpt-2为例:
+    enum ggml_cgraph_eval_order order; //递归时src数组遍历正序或逆序
+};
+
+```
+
+**3.1 内存分配**
+调用接口ggml_new_graph(ggml_ctx)分配graph内存
+- 根据size计算graph所需内存大小，包含node leaf hash
+- ctx根据size新建graph_obj，插入ggml ctx链表
+- 计算包含node leaf hash等在graph_obj.data中的起始地址
+- 结果返回ggml_cgraph*
+
+**3.2 定义计算节点**
+例如定义y = a * w + b。初始化ax y的src和op_type
+```c
+struct ggml_tensor * ax = ggml_mul(ggml_ctx, a, w);
+struct ggml_tensor * y = ggml_add(ggml_ctx, ax, b);
+struct ggml_tensor * res_tensor = ggml_mul(ggml_ctx, y, d);
+```
+**3.3 构建计算图**
+    
+ggml_visit_parents从存放结果张量为根节点，每个节点依赖的张量为子节点，根据计算关系逆序遍历计算图  
+遍历到的节点分别拷贝到ggml_cgraph nodes和leafs  
+
+ggml_visit_parents(cgraph, res_tensor)判断逻辑
+- 从res_tensor开始，遍历所有依赖张量
+- 
+- 
+-
+
+**3.4 run计算图**
+ggml_graph_compute_with_ctx
 
 
 ## 4.ggml_backend
@@ -244,10 +287,10 @@ struct ggml_backend_buffer {
 };
 ```
 
-cpu后端根据ctx申请内存，并返回ggml_backend_buffer  
+cpu后端根据ggml_ctx申请内存，并返回ggml_backend_buffer  
 ```c
 // get cpu backend
-ggml_backend_t backend = ggml_backend_cpu_init();//backend
+ggml_backend_t backend = ggml_backend_cpu_init();
 struct ggml_init_params pdata = {  
     /*mem_size   =*/ mem_size,
     /*mem_buffer =*/ nullptr,
@@ -257,6 +300,7 @@ struct ggml_init_params pdata = {
 ggml_context** ggml_ctx= ggml_init(pdata); 
 // 1. get buftype + buftype.iface.alloc_buffer for all tensor
 // 2. combine all ggml_backend_buffer_t to one ggml_backend_buffer_t
+// 3. ggml_backend_buffer_t以及addr回流至tensor，并init tensor buf（if required)
 ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx);
 ```
 
