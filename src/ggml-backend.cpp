@@ -86,7 +86,7 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
     ggml_backend_buffer_t buffer = new ggml_backend_buffer {
         /* .interface = */ iface,
         /* .buft      = */ buft,
-        /* .context   = */ context,
+        /* .context   = */ context, // true buffer
         /* .size      = */ size,
         /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
     };
@@ -1850,7 +1850,7 @@ bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t 
     return true;
 }
 
-// CPU backend - buffer
+// CPU backend - buffer context
 
 static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
     uintptr_t data = (uintptr_t)buffer->context;

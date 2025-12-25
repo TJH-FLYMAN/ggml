@@ -70,7 +70,7 @@ static size_t aligned_offset(const void * buffer, size_t offset, size_t alignmen
 // tallocr
 
 struct ggml_tallocr ggml_tallocr_new(ggml_backend_buffer_t buffer) {
-    void * base = ggml_backend_buffer_get_base(buffer);
+    void * base = ggml_backend_buffer_get_base(buffer); // get align(buf.context)
     size_t align = ggml_backend_buffer_get_alignment(buffer);
 
     assert(align && !(align & (align - 1))); // power of 2
@@ -87,18 +87,18 @@ struct ggml_tallocr ggml_tallocr_new(ggml_backend_buffer_t buffer) {
 void ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_tensor * tensor) {
     size_t size = ggml_backend_buffer_get_alloc_size(talloc->buffer, tensor);
     size = GGML_PAD(size, talloc->alignment);
-
+    //检查剩余可用
     if (talloc->offset + size > ggml_backend_buffer_get_size(talloc->buffer)) {
         GGML_LOG_ERROR("%s: not enough space in the buffer to allocate %s (needed %zu, available %zu)\n",
                 __func__, tensor->name, size, ggml_backend_buffer_get_size(talloc->buffer) - talloc->offset);
         GGML_ABORT("not enough space in the buffer");
     }
-
+    // 下次偏移
     void * addr = (char *)ggml_backend_buffer_get_base(talloc->buffer) + talloc->offset;
     talloc->offset += size;
 
     assert(((uintptr_t)addr % talloc->alignment) == 0);
-
+    // buf以及addr回流至tensor，并init tensor vbuf（if required)
     ggml_backend_tensor_alloc(talloc->buffer, tensor, addr);
 }
 
@@ -932,6 +932,7 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
         struct ggml_tensor * first, struct ggml_tensor * last,
         ggml_backend_buffer_type_t buft, size_t size,
         ggml_backend_buffer_t ** buffers, size_t * n_buffers) {
+        // new ggml_backend_buffer_t
     ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, size);
     if (buffer == NULL) {
 #ifndef NDEBUG
@@ -943,12 +944,13 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
         free(*buffers);
         return false;
     }
-
-    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer);
+    // buf细分tensor，定义struct记录ptr以及offset
+    struct ggml_tallocr tallocr = ggml_tallocr_new(buffer); 
 
     for (struct ggml_tensor * t = first; t != last; t = ggml_get_next_tensor(ctx, t)) {
         if (t->data == NULL) {
             if (t->view_src == NULL) {
+                // 根据t更新offset
                 ggml_tallocr_alloc(&tallocr, t);
             } else if (t->buffer == NULL) {
                 ggml_backend_view_init(t);

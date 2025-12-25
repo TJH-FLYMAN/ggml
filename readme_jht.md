@@ -2,12 +2,19 @@
 
 ## ggml的核心概念
 gguf : ggml模型格式
+
 ggml_context: 一个装载各类对象 (如张量、计算图、其他数据) 的“容器”  
+
 ggml_cgraph: 计算图的表示，可以理解为将要传给后端的“计算执行顺序”。  
-ggml_backend: 执行计算图的接口，有很多种类型: CPU (默认) 、CUDA、Metal (Apple Silicon) 、Vulkan、RPC 等等  
+
+ggml_backend: 执行计算图的接口，有很多种类型: CPU (默认) 、CUDA、Metal (Apple Silicon) 、Vulkan、RPC 等等
+
 ggml_backend_buffer_type: 表示一种缓存，可以理解为连接到每个 ggml_backend 的一个“内存分配器”。比如你要在 GPU 上执行计算，那你就需要通过一个buffer_type (通常缩写为 buft ) 去在 GPU 上分配内存  
-ggml_backend_buffer: 表示一个通过 buffer_type 分配的缓存。需要注意的是，一个缓存可以存储多个张量数据。  
+
+ggml_backend_buffer: 表示一个通过 buffer_type 分配的缓存。需要注意的是，一个缓存可以存储多个张量数据。 ggml中一切数据（context、dataset、weight、output…）都被存放在 buffer 中。ggml使用buffer进行集成承载不同的数据，实现多种后端（CPU、GPU）设备内存的统一管理。ggml_backend_buffer是实现不同类型数据在多种后端上进行统一的接口对象  
+
 ggml_gallocr: 表示一个给计算图分配内存的分配器，可以给计算图中的张量进行高效的内存分配。  
+
 ggml_backend_sched: 后端调度器，使得多种后端可以并发使用，大模型或多 GPU 推理时，实现跨硬件平台地分配计算任务 (CPU 加 GPU 混合计算、CPU和NPU混合计算)。调度器还能自动将 GPU 不支持的算子转移到 CPU 上，来确保最优的资源利用和兼容性。  
 
 ## 1. GGUF
@@ -115,9 +122,13 @@ a.  gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr; ->ini
     gguf_init_from_file中。先为所有tensor_data分配整块内存，后续ggml_new_tensor，需set(no_alloc,true)时，只分配metadata内存。         Abcbcbcbcbc  
 b.  gguf_init_params.ctx == nullptr; 独立初始化ggml_context 。tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列  abcabcabc...abc  
 
+## 3.ggml_cgraph
+graph的构建有两个步骤
+- 使用算子函数连接weight参数、创建中间计算节点  
+- 使用ggml_build_forward_expand()函数构建计算图
 
+以examples/gpt-2为例:
 
-## 3.ggml_graph
 
 ## 4.ggml_backend
 在介绍后端之前，先介绍后端注册表 。后端注册通过维护一个static ggml_backend_registry实现,允许运行时动态加载后端,也可静态定义。
@@ -191,47 +202,63 @@ ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
 ```
 
 ## 5.ggml_backend_buffer_type
-buffer_type可以理解为一个类型描述符（buffer descriptor）, 描述内存类型、内存对齐字节数和以及device上如何alloc、free
+buffer_type可以理解为一个类型描述符（buffer descriptor）也是backend的内存分配器, 描述内存类型、内存对齐字节数和以及device上如何alloc、free
+完成内存对齐、内存分配、buf大小不超过设备限制、以及不同后端之间数据传输
+```
+struct ggml_backend_buffer_type {
+    struct ggml_backend_buffer_type_i  iface; // 一组接口函数，包括获取buft_name、alloc、get_align、get_max_size、get_alloc_size、is_Host
+    ggml_backend_dev_t device; // 关联的后端设备
+    void * context;
+};
+```
+
+**5.1 获取buft**
+完成初始化后端，根据后端设备获取buft并绑定设备
+以cpu为例
+```c
+// backend -> buft
+ggml_backend_buffer_type_t ggml_backend_get_default_buffer_type(ggml_backend_t backend) {
+    return ggml_backend_dev_buffer_type(backend->device);
+}
+ggml_backend_buffer_type_t ggml_backend_dev_buffer_type(ggml_backend_dev_t device) {
+    return device->iface.get_buffer_type(device); // 返回static struct ggml_backend_buffer_type，device虚参
+}
+
+//buft.alloc_buf
+static ggml_backend_buffer_t ggml_backend_cpu_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    void * data = ggml_aligned_malloc(size);
+    return ggml_backend_buffer_init(buft, ggml_backend_cpu_buffer_i, data, size); // new ggml_backend_buffer ，传入ptr、size、iface、buft
+}
+```
 
 
 ## 6. ggml_backend_buffer
-ggml中一切数据（context、dataset、weight、output…）都被存放在 buffer 中。ggml使用buffer进行集成承载不同的数据，实现多种后端（CPU、GPU）设备内存的统一管理。ggml_backend_buffer是实现不同类型数据在多种后端上进行统一的接口对象
-- struct ggml_backend_buffer_i  iface; 后端对buffer进行操作的接口 
-- ggml_backend_buffer_type_t    buft; buffer所属后端类型
-- void * context; 后端buffer地址
-- size_t size; 后端buffer大小 
-- enum ggml_backend_buffer_usage usage; buffer用途，any通用/weight权重数据/compute计算数据
-
-
-获取cpu后端的ggml_backend_buffer
+实际存放数据的buf
 ```c
+struct ggml_backend_buffer {
+    struct ggml_backend_buffer_i  iface; //操作ggml_backend_buffer的一组接口函数
+    ggml_backend_buffer_type_t    buft; 
+    void * context; // buffer ptr
+    size_t size; // buffer size
+    enum ggml_backend_buffer_usage usage; //buffer用途： any通用/weight权重数据/compute计算数据
+};
+```
+
+cpu后端根据ctx申请内存，并返回ggml_backend_buffer  
+```c
+// get cpu backend
 ggml_backend_t backend = ggml_backend_cpu_init();//backend
 struct ggml_init_params pdata = {  
     /*mem_size   =*/ mem_size,
     /*mem_buffer =*/ nullptr,
     /*no_alloc   =*/ params.no_alloc,
 };
-
-ggml_context** ggml_ctx= ggml_init(pdata); // ggml_context
-// buftype + buftype.iface.alloc_buffer
+// get ggml_context
+ggml_context** ggml_ctx= ggml_init(pdata); 
+// 1. get buftype + buftype.iface.alloc_buffer for all tensor
+// 2. combine all ggml_backend_buffer_t to one ggml_backend_buffer_t
 ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx);
-/* 
-// 根据backend.device获取buftype，一个操作ggml_backend_buffer的分配器
-ggml_backend_buffer_type_t buftptet  = ggml_backend_get_default_buffer_type(backend); 
-// 遍历tensors ,调用buftype.iface.alloc_buffer申请buf
-// 每个tensor对应的ggml_backend_buffer_t组合到一个ggml_backend_buffer_t对象中，并返回
-ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors_from_buft(ggml_ctx,buftptet) 
-/*
 ```
 
-## 7.ggml_cgraph
-graph的构建有两个步骤
-- 使用算子函数连接weight参数、创建中间计算节点  
-- 使用ggml_build_forward_expand()函数构建计算图
-
-以examples/gpt-2为例:
-
-
-
-## 8.ggml_schedule
+## 7.ggml_schedule
 后端调度，分配节点计算

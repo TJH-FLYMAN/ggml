@@ -29,7 +29,7 @@ extern "C" {
     };
     // 后端缓冲区类型descriptor
     struct ggml_backend_buffer_type {
-        struct ggml_backend_buffer_type_i  iface; // 接口
+        struct ggml_backend_buffer_type_i  iface; // 接口函数
         ggml_backend_dev_t device; // 关联的后端设备
         void * context;
     };
@@ -58,10 +58,10 @@ extern "C" {
     };
 
     struct ggml_backend_buffer {
-        struct ggml_backend_buffer_i  iface; //后端对buffer进行操作的接口 
-        ggml_backend_buffer_type_t    buft; //buffer所属后端类型
-        void * context; // 后端buffer地址
-        size_t size; // 后端buffer大小 
+        struct ggml_backend_buffer_i  iface; //操作context的一组接口函数
+        ggml_backend_buffer_type_t    buft; 
+        void * context; // buf ptr
+        size_t size; // buf size
         enum ggml_backend_buffer_usage usage; //buffer用途： any通用/weight权重数据/compute计算数据
     };
 
