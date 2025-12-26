@@ -145,11 +145,17 @@ struct ggml_cgraph {
 ```
 
 **3.1 内存分配**
+内存分配分为图张量内存分配器ggml_galloc_t和图内存申请ggml_new_graph
+ggml_new_graph : 为计算图分配内存
+ggml_galloc_t : 为计算图中的张量分配实际内存
+
+**ggml_new_graph**
 调用接口ggml_new_graph(ggml_ctx)分配graph内存
 - 根据size计算graph所需内存大小，包含node leaf hash
 - ctx根据size新建graph_obj，插入ggml ctx链表
 - 计算包含node leaf hash等在graph_obj.data中的起始地址
 - 结果返回ggml_cgraph*
+
 
 **3.2 定义计算节点**
 例如定义y = a * w + b。初始化ax y的src和op_type
@@ -164,14 +170,45 @@ ggml_visit_parents从存放结果张量为根节点，每个节点依赖的张�
 遍历到的节点分别拷贝到ggml_cgraph nodes和leafs  
 
 ggml_visit_parents(cgraph, res_tensor)判断逻辑
-- 从res_tensor开始，遍历所有依赖张量
-- 
-- 
--
+- 从res_tensor开始，遍历所有依赖张量,tensor.src[:], cgraph.order决定tensor.src[:]遍历正序/逆序。默认正序
+- hash_set记录已访问张量，避免重复遍历
+- leafs: tensor.op == NULL && !param
+- leafs以外都为node
 
-**3.4 run计算图**
-ggml_graph_compute_with_ctx
-
+以gpt2为例,从layer0.kv缓存开始构建计算图
+```c
+// tensor: embd  position memory_k memory_c  wte wpe
+// weight:   norm(ln_1_g,ln_1_b) atten(c_attn_attn_w,c_attn_attn_b)
+// constant: norm(eps)
+inpl = ggml_add(ctx,ggml_get_rows(ctx, wte, embd),ggml_get_rows(ctx, wpe, position));
+normRes = ggml_add(ctx,ggml_mul(ctx,ggml_norm(ctx, inpL, eps);,ln_1_g),ln_1_b);
+attenres = ggml_add(ctx,ggml_mul_mat(ctx,c_attn_attn_w,cur),c_attn_attn_b);
+Kcur = ggml_view_2d(ctx, cur, n_embd, N, cur->nb[1], 1*sizeof(float)*n_embd);
+// store key and value to memory
+k = ggml_view_1d(ctx, model.memory_k, N*n_embd, (ggml_element_size(model.memory_k)*n_embd)*(il*n_ctx + n_past));
+ggml_build_forward_expand(gf, ggml_cpy(ctx, Kcur, k));
+//添加节点顺序
+// leaf                             c_attn_attn_w  
+// leaf                             wte 
+// leaf                             embd 
+// node                             ggml_get_rows(wte) res 
+// leaf                             model/wpe 
+// leaf                             position 
+// node                             ggml_get_rows(wpe) res 
+// node                             inpl 
+// node                             normRes
+// leaf                             model/h0/ln_1/g 
+// node                             norm中mul结果tensor
+// leaf                             model/h0/ln_1/b 
+// node                             norm中add结果tensor 
+// node                             atten中mul结果tensor 
+// leaf                             c_attn_attn_b 
+// node                             attenres 
+// node                             Kcur
+// leaf                             memory_k
+// node                             K
+// node                             Kcur
+```
 
 ## 4.ggml_backend
 在介绍后端之前，先介绍后端注册表 。后端注册通过维护一个static ggml_backend_registry实现,允许运行时动态加载后端,也可静态定义。
@@ -304,5 +341,21 @@ ggml_context** ggml_ctx= ggml_init(pdata);
 ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx);
 ```
 
+
+## 7.ggml_gallocr
+global allocator用于不同后端计算过程中的计算结果内存管理。通过预先规划内存布局，最大化内存复用.计算节点和输入节点，采用不同的内存管理策略。其次，使用哈希表实现O(1)时间复杂度的张量查找
+ggml_backend_alloc_ctx_tensors申请的是权重内存，ggml_gallocr申请每个后端上的计算内存workspace_buf
+
+主要接口
+ggml_new_gallocr: 内存分配以及初始化ggml_gallocr
+ggml_gallocr_reserve : 预分配内存
+ggml_gallocr_get_buffer_size : 
+ggml_gallocr_alloc_graph：
+
+**ggml_gallocr_reserve**
+
+**ggml_gallocr_alloc_graph**
+
 ## 7.ggml_schedule
 后端调度，分配节点计算
+

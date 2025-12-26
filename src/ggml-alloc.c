@@ -357,13 +357,13 @@ struct node_alloc {
 };
 
 struct ggml_gallocr {
-    ggml_backend_buffer_type_t * bufts; // [n_buffers] 缓冲区分配器
-    ggml_backend_buffer_t * buffers; // [n_buffers]  实际缓冲区数组
-    struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers] 动态分配器数组
-    int n_buffers; // 缓冲区数量
+    ggml_backend_buffer_type_t * bufts; // [n_buffers] buft数组,区分不同后端
+    ggml_backend_buffer_t * buffers; // [n_buffers]    buf数组
+    struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers] buf的动态分配器，负责具体的内存分配
+    int n_buffers;
 
     struct ggml_hash_set hash_set;
-    struct hash_node * hash_values; // [hash_set.size]
+    struct hash_node * hash_values; // [hash_set.size] 
 
     struct node_alloc * node_allocs; // [n_nodes]
     int n_nodes;

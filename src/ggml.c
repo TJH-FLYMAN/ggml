@@ -1179,9 +1179,6 @@ size_t ggml_type_size(enum ggml_type type) {
 
 size_t ggml_row_size(enum ggml_type type, int64_t ne) {
     assert(ne % ggml_blck_size(type) == 0);
-    printf("%ld\n",ggml_type_size(type));
-    printf("%ld\n",ne);
-    printf("%ld\n",ggml_blck_size(type));
     return ggml_type_size(type)*ne/ggml_blck_size(type);
 }
 
@@ -5701,31 +5698,30 @@ static void ggml_compute_backward(
     GGML_ASSERT(!src2_needs_grads || ggml_are_same_shape(src2, cgraph->grads[isrc2]));
 }
 
+//标准的DFS
 static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor * node) {
-    // check if already visited
+    // check if already visited 
     if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
-        return; // 该节点已经有策略了，使用 `visited_hash_set` 做 visited check，避免重复访问。（类似于DFS的visited）
+        return;
     }
-    // 遍历所有输入节点（父节点）
     for (int i = 0; i < GGML_MAX_SRC; ++i) {
         const int k =
             (cgraph->order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :
             (cgraph->order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) :
             /* unknown order, just fall back to using i*/ i;
-        if (node->src[k]) { //node->src[k] 是该节点的第 k 个输入
+        if (node->src[k]) { 
             ggml_visit_parents(cgraph, node->src[k]); // 递归
         }
     }
-    // 如果 op == NONE 且不是参数（param），说明这是常量或中间输入，不会参与梯度计算，视为 叶子节点
-    // 加入 cgraph->leafs[] 或 cgraph->nodes[]
+    // 非计算op && 非param = 叶子节点
     if (node->op == GGML_OP_NONE && !(node->flags & GGML_TENSOR_FLAG_PARAM)) {
         // reached a leaf node, not part of the gradient graph (e.g. a constant)
         GGML_ASSERT(cgraph->n_leafs < cgraph->size);
-        // 如果该 tensor 没有名字，会给一个默认名如 "leaf_0"、"node_1"
+        // rename tensorname = f"leaf_{n_leafs}"/ f"node_{n_nodes}" if tensorname==null
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "leaf_%d", cgraph->n_leafs);
         }
-
+        printf( "leaf %s \n",node->name);
         cgraph->leafs[cgraph->n_leafs] = node;
         cgraph->n_leafs++;
     } else {
@@ -5734,12 +5730,12 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "node_%d", cgraph->n_nodes);
         }
-
+        printf( "node %s \n",node->name);
         cgraph->nodes[cgraph->n_nodes] = node;
         cgraph->n_nodes++;
     }
 }
-// 从res_tensor出发,逆序递归调用ggml_visit_parents遍历计算图
+// 从res_tensor出发, 遍历计算图node
 static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_tensor * tensor, bool expand) {
 
     if (!expand) {
@@ -5748,7 +5744,6 @@ static void ggml_build_forward_impl(struct ggml_cgraph * cgraph, struct ggml_ten
     }
 
     const int n0 = cgraph->n_nodes;
-
     ggml_visit_parents(cgraph, tensor);
 
     const int n_new = cgraph->n_nodes - n0;
