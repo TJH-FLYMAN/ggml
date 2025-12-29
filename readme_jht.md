@@ -343,19 +343,38 @@ ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx)
 
 
 ## 7.ggml_gallocr
-global allocator用于不同后端计算过程中的计算结果内存管理。通过预先规划内存布局，最大化内存复用.计算节点和输入节点，采用不同的内存管理策略。其次，使用哈希表实现O(1)时间复杂度的张量查找
-ggml_backend_alloc_ctx_tensors申请的是权重内存，ggml_gallocr申请每个后端上的计算内存workspace_buf
+global allocator用于不同后端workspace_mem内存管理。  
+通过预先规划内存布局，最大化内存复用。计算节点和输入节点，采用不同的内存管理策略。其次，使用哈希表张量快速查找  
 
-主要接口
-ggml_new_gallocr: 内存分配以及初始化ggml_gallocr
-ggml_gallocr_reserve : 预分配内存
-ggml_gallocr_get_buffer_size : 
-ggml_gallocr_alloc_graph：
+ggml_backend_alloc_ctx_tensors申请的是权重内存，ggml_gallocr申请每个后端上的计算内存workspace_buf  
 
-**ggml_gallocr_reserve**
+ggml_gallocr的使用流程：ggml_gallocr_new -> ggml_gallocr_reserve -> ggml_gallocr_alloc_graph -> ggml_gallocr_get_buffer_size
+- 整个流程从后端缓冲区类型出发，创建一个专门用于计算图内存管理的分配器gallocr (gallocr_new)
+- 然后通过最坏情况的计算图来精确估计计算过程中将使用的内存，然后预留这部分内存 (reserve)
+- 最后查询并输出整个分配结果(get_buffer_size)
 
-**ggml_gallocr_alloc_graph**
+主要涉及两个结构体ggml_gallocr、ggml_dyn_tallocr
+ggml_gallocr : 图内存分配器,管理所有buft以及
+ggml_dyn_tallocr : 动态张量分配器。相同buft共享一个dyn_tallocr
 
-## 7.ggml_schedule
+内存管理原理参考xlite维护两个数组mem_alloc_size以及mem_using。
+- 无空闲内存，mem_alloc_size.push_back(size)
+- 存在空闲内存块，大于size复用，mem_alloc_size[i] | mem_using[i]=0 = size
+
+**7.1 ggml_gallocr_new_n**
+分配gallocr内存;分配gallocr.bufs gallocr.buffers gallocr.buf_tallocs内存，calloc初始化0
+```c
+// 获取一个gallocr 根据backend.device.iface.buft
+ggml_gallocr_t allocr = ggml_gallocr_new(buft)
+// 获取n_bufs个gallocr , buft数组
+ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs)
+```
+**7.2 ggml_gallocr_reserve_n**
+根据graph规划计算节点所需最小内存，并分配。流程如下
+- 根据graph统计的node和leaf节点数构建初始化哈希表并init(hash_size =  1.25 * (n_nodes + n_leafs))
+- 初始化动态张量分配器
+**7.3 ggml_gallocr_alloc_graph**
+根据reserve阶段的规划，为graph中张量设置 data 指针
+## 8.ggml_schedule
 后端调度，分配节点计算
 

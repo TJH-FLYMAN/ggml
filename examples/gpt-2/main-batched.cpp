@@ -1042,7 +1042,7 @@ int main(int argc, char ** argv) {
         batch.n_tokens = n_batch_max;
         struct ggml_cgraph * gf = gpt2_graph(model, batch, true);
 
-        // pre-allocate the compute buffer for the worst case (optional)
+        // pre-allocate the compute buffer for the worst case (optional) 
         ggml_gallocr_reserve(allocr, gf);
         size_t mem_size = ggml_gallocr_get_buffer_size(allocr, 0);
         fprintf(stderr, "%s: compute buffer size: %.2f MB\n", __func__, mem_size/1024.0/1024.0);

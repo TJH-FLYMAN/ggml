@@ -386,17 +386,18 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i] = bufts[i];
-        galloc->buffers[i] = NULL;
+        galloc->bufts[i] = bufts[i]; // bufts[i]赋值galloc->bufts[i]中
+        galloc->buffers[i] = NULL;  // buft对应buf
 
         // check if the same buffer type is used multiple times and reuse the same allocator
+        // 相同buft复用同一个ggml_dyn_tallocr。
         for (int j = 0; j < i; j++) {
-            if (bufts[i] == bufts[j]) {
+            if (bufts[i] == bufts[j]) { // i in [0:i-1]
                 galloc->buf_tallocs[i] = galloc->buf_tallocs[j];
                 break;
             }
         }
-
+        // 未找到相同buft，创建新的ggml_dyn_tallocr
         if (galloc->buf_tallocs[i] == NULL) {
             size_t alignment = ggml_backend_buft_get_alignment(bufts[i]);
             galloc->buf_tallocs[i] = ggml_dyn_tallocr_new(alignment);
@@ -558,6 +559,7 @@ static int get_node_buffer_id(const int * node_buffer_ids, int i) {
     return node_buffer_ids ? node_buffer_ids[i] : 0;
 }
 
+// 遍历计算图中nodes、leafs, 每个 tensor 计算出对应的内存分配（buffer_id, offset 等），并记录到Hash表中
 static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
     // clear hash tables
     ggml_hash_set_reset(&galloc->hash_set);
@@ -689,7 +691,8 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
     // allocate in hash table
     ggml_gallocr_alloc_graph_impl(galloc, graph, node_buffer_ids, leaf_buffer_ids);
 
-    // set the node_allocs from the hash table
+    // set the node_allocs from the hash table 
+    // node_allocs ：node的src dsr 的alloc信息
     if (galloc->n_nodes < graph->n_nodes) {
         free(galloc->node_allocs);
         galloc->node_allocs = calloc(graph->n_nodes, sizeof(struct node_alloc));
@@ -699,19 +702,19 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
     for (int i = 0; i < graph->n_nodes; i++) {
         struct ggml_tensor * node = graph->nodes[i];
         struct node_alloc * node_alloc = &galloc->node_allocs[i];
-        if (node->view_src || node->data) {
+        if (node->view_src || node->data) {  // node 已经有数据或属于视图，dst无需重新分配
             node_alloc->dst.buffer_id = -1;
             node_alloc->dst.offset = SIZE_MAX;
             node_alloc->dst.size_max = 0;
         } else {
-            struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+            struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);//Hash 表中tensor 的id offset
             node_alloc->dst.buffer_id = hn->buffer_id;
             node_alloc->dst.offset    = hn->offset;
             node_alloc->dst.size_max  = ggml_backend_buft_get_alloc_size(galloc->bufts[hn->buffer_id], node);
         }
         for (int j = 0; j < GGML_MAX_SRC; j++) {
             struct ggml_tensor * src = node->src[j];
-            if (!src || src->view_src || src->data) {
+            if (!src || src->view_src || src->data) { 
                 node_alloc->src[j].buffer_id = -1;
                 node_alloc->src[j].offset = SIZE_MAX;
                 node_alloc->src[j].size_max = 0;
@@ -723,6 +726,7 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
             }
         }
     }
+    // leaf_allocs 原理同上
     if (galloc->n_leafs < graph->n_leafs) {
         free(galloc->leaf_allocs);
         galloc->leaf_allocs = calloc(graph->n_leafs, sizeof(galloc->leaf_allocs[0]));
@@ -743,7 +747,7 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
         }
     }
 
-    // reallocate buffers if needed
+    // reallocate buffers if needed 根据当前分配器信息重新分配后端缓冲区
     for (int i = 0; i < galloc->n_buffers; i++) {
         // if the buffer type is used multiple times, we reuse the same buffer
         for (int j = 0; j < i; j++) {
