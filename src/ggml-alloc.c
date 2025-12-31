@@ -150,11 +150,12 @@ static size_t ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * alloc, size_t siz
 
     AT_PRINTF("%s: allocating %s (%zu bytes) - ", __func__, tensor->name, size);
 
-    size_t max_avail = 0;
+    size_t max_avail = 0; // 记录最大free block size,用于调试
 
-    // find the best fitting free block besides the last block
+    // find the best fitting free block besides the last block 
     int best_fit_block = -1;
     size_t best_fit_size = SIZE_MAX;
+    //除最后一个free block,free的内存块里找一个 > size且最小的
     for (int i = 0; i < alloc->n_free_blocks - 1; i++) {
         struct free_block * block = &alloc->free_blocks[i];
         max_avail = MAX(max_avail, block->size);
@@ -163,7 +164,7 @@ static size_t ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * alloc, size_t siz
             best_fit_size = block->size;
         }
     }
-
+    // 检查last free block size > size。不满足报错
     if (best_fit_block == -1) {
         // the last block is our last resort
         struct free_block * block = &alloc->free_blocks[alloc->n_free_blocks - 1];
@@ -177,12 +178,12 @@ static size_t ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * alloc, size_t siz
             GGML_ABORT("not enough space in the buffer");
         }
     }
-
+    // free_new = free -size
     struct free_block * block = &alloc->free_blocks[best_fit_block];
     size_t offset = block->offset;
     block->offset = offset + size;
     block->size -= size;
-    if (block->size == 0) {
+    if (block->size == 0) { // 当前free block 用完,更新free_blocks数组以及count
         // remove block if empty
         alloc->n_free_blocks--;
         for (int j = best_fit_block; j < alloc->n_free_blocks; j++) {
@@ -221,7 +222,7 @@ static size_t ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * alloc, size_t siz
         GGML_LOG_DEBUG("\n");
     }
 #endif
-
+    //更新alloc使用内存大小
     alloc->max_size = MAX(alloc->max_size, offset + size);
 
     return offset;
@@ -473,42 +474,45 @@ static bool ggml_gallocr_is_allocated(ggml_gallocr_t galloc, struct ggml_tensor 
 
 static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor * node, int buffer_id) {
     GGML_ASSERT(buffer_id >= 0);
-    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);//获取tensor的hash信息，
 
     if (!ggml_gallocr_is_allocated(galloc, node) && !ggml_is_view(node)) {
         hn->allocated = true;
         assert(hn->offset == 0);
 
         // try to reuse a parent's buffer (inplace)
-        if (ggml_op_can_inplace(node->op)) {
-            for (int i = 0; i < GGML_MAX_SRC; i++) {
+        if (ggml_op_can_inplace(node->op)) {// 查询当前op是否支持dst覆盖src，如果支持，则尝试将dst覆盖src
+            for (int i = 0; i < GGML_MAX_SRC; i++) {//遍历父节点
                 struct ggml_tensor * parent = node->src[i];
                 if (parent == NULL) {
                     continue;
                 }
 
                 // if the node's data is external, then we cannot re-use it
-                if (!ggml_gallocr_is_own(galloc, parent)) {
+                if (!ggml_gallocr_is_own(galloc, parent)) {//外部buf，不复用
                     AT_PRINTF("not reusing parent %s for %s as %p is external\n", parent->name, node->name, parent->data);
                     continue;
                 }
 
-                // outputs cannot be reused
+                // outputs cannot be reused  输出张量不复用
                 if (parent->flags & GGML_TENSOR_FLAG_OUTPUT || (parent->view_src != NULL && parent->view_src->flags & GGML_TENSOR_FLAG_OUTPUT)) {
                     AT_PRINTF("not reusing parent %s for %s as it is an output\n", parent->name, node->name);
                     continue;
                 }
 
-                if (!ggml_are_same_layout(node, parent)) {
+                if (!ggml_are_same_layout(node, parent)) { // layout不同不复用
                     AT_PRINTF("not reusing parent %s for %s as layouts are different\n", parent->name, node->name);
                     continue;
                 }
 
-                struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent);
-                if (p_hn->n_children == 1 && p_hn->n_views == 0) {
-                    if (ggml_is_view(parent)) {
+                struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent); // 父节点hash信息
+                if (p_hn->n_children == 1 && p_hn->n_views == 0) {//父节点只有一个子节点且没有视图，确保安全复用
+                    if (ggml_is_view(parent)) {//处理视图情况，视图的src是否可以安全复用
                         struct ggml_tensor * view_src = parent->view_src;
-                        struct hash_node * view_src_hn = ggml_gallocr_hash_get(galloc, view_src);
+                        struct hash_node * view_src_hn = ggml_gallocr_hash_get(galloc, view_src);//视图的src hash信息
+                        // view_src和src一对一，没有其他视图使用这个源张量，防止复用后影响其他视图的使用
+                        // view_src不能有其他子节点 无其他计算节点依赖它
+                        // view_src和src 数据指针相同
                         if (view_src_hn->n_views == 1 && view_src_hn->n_children == 0 && view_src->data == parent->data) {
                             AT_PRINTF("reusing view parent %s (%s) for %s\n", parent->name, view_src->name, node->name);
                             assert(view_src_hn->offset == p_hn->offset);
@@ -518,7 +522,7 @@ static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor
                             view_src_hn->allocated = false;
                             return;
                         }
-                    } else {
+                    } else {// 父节点不是视图，直接复用buf,设置当前节点使用相同的缓冲区ID和偏移量标记父节点为未分配状态，避免被释放
                         AT_PRINTF("reusing parent %s for %s\n", parent->name, node->name);
                         hn->buffer_id = p_hn->buffer_id;
                         hn->offset = p_hn->offset;
@@ -528,7 +532,7 @@ static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor
                 }
             }
         }
-        // allocate tensor from the buffer
+        // allocate tensor from the buffer  没法复用，直接分配buf
         struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
         ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
         size_t size = ggml_backend_buft_get_alloc_size(buft, node);
@@ -583,7 +587,7 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
         // itself is never used and should not be considered a dependency
         if (ggml_is_view(node) && node->op != GGML_OP_NONE) {
             struct ggml_tensor * view_src = node->view_src;
-            ggml_gallocr_hash_get(galloc, view_src)->n_views += 1;
+            ggml_gallocr_hash_get(galloc, view_src)->n_views += 1; // 更新源视图 count
         }
 
         if (node->flags & GGML_TENSOR_FLAG_INPUT) {
@@ -667,6 +671,8 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
     }
 }
 
+// node_buffer_ids 指定node节点对应的bufts index  ; NULL代表所有节点都分配到默认缓冲区bufts index=0
+// leaf_buffer_ids 指定leaf分配对应的bufts index
 bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, const int * node_buffer_ids, const int * leaf_buffer_ids) {
     size_t min_hash_size = graph->n_nodes + graph->n_leafs;
     // add 25% margin to avoid hash collisions

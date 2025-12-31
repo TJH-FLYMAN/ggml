@@ -369,10 +369,14 @@ ggml_gallocr_t allocr = ggml_gallocr_new(buft)
 // 获取n_bufs个gallocr , buft数组
 ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs)
 ```
-**7.2 ggml_gallocr_reserve_n**
-根据graph规划计算节点所需最小内存，并分配。流程如下
-- 根据graph统计的node和leaf节点数构建初始化哈希表并init(hash_size =  1.25 * (n_nodes + n_leafs))
-- 初始化动态张量分配器
+**7.2 ggml_gallocr_reserve_n**  
+根据graph规划计算节点所需最小内存，并分配。流程如下  
+- 根据graph统计的node和leaf节点数构建初始化哈希表并init(hash_size =  1.25 * (n_nodes + n_leafs))  
+- 初始化动态张量分配器ggml_dyn_tallocr  
+- 对于leaf节点 直接分配内存，统计hash表中view次数以及作为输入n_children次数  
+- 对于node节点 遍历两次，第一次统计子节点数量n_children和视图计数（n_views） ++  
+    第二次直接分配内存并更新hash表，拓扑顺序分配内存：确保父节点在子节点之前分配 -- 
+- 对于view= 0 ,n_children=0. 内存块回归free内存池
 **7.3 ggml_gallocr_alloc_graph**
 根据reserve阶段的规划，为graph中张量设置 data 指针
 ## 8.ggml_schedule
