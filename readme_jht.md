@@ -357,9 +357,9 @@ ggml_gallocr的使用流程：ggml_gallocr_new -> ggml_gallocr_reserve -> ggml_g
 ggml_gallocr : 图内存分配器,管理所有buft以及
 ggml_dyn_tallocr : 动态张量分配器。相同buft共享一个dyn_tallocr
 
-内存管理原理参考xlite维护两个数组mem_alloc_size以及mem_using。
-- 无空闲内存，mem_alloc_size.push_back(size)
-- 存在空闲内存块，大于size复用，mem_alloc_size[i] | mem_using[i]=0 = size
+内存复用：
+- 无空闲内存 或 空闲内存块size不满足要求，mem_alloc_size.push_back(size)
+- 存在空闲内存块且size满足要求(大于且最靠近)。切割free_block,剩余free部分作为新的free_block
 
 **7.1 ggml_gallocr_new_n**
 分配gallocr内存;分配gallocr.bufs gallocr.buffers gallocr.buf_tallocs内存，calloc初始化0
@@ -375,10 +375,22 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 - 初始化动态张量分配器ggml_dyn_tallocr  
 - 对于leaf节点 直接分配内存，统计hash表中view次数以及作为输入n_children次数  
 - 对于node节点 遍历两次，第一次统计子节点数量n_children和视图计数（n_views） ++  
-    第二次直接分配内存并更新hash表，拓扑顺序分配内存：确保父节点在子节点之前分配 -- 
-- 对于view= 0 ,n_children=0. 内存块回归free内存池
-**7.3 ggml_gallocr_alloc_graph**
-根据reserve阶段的规划，为graph中张量设置 data 指针
-## 8.ggml_schedule
-后端调度，分配节点计算
+    第二次直接分配内存并更新hash表，拓扑顺序分配内存：确保父节点在子节点之前分配 --  
+- 对于view= 0 ,n_children=0. 内存块回归free内存池  
 
+**7.3 ggml_gallocr_alloc_graph**  
+根据reserve阶段的规划，为graph中张量设置 data 指针  
+- 根据tensor_hashmap.buf_id获取buft的base_ptr  
+- tensor_hashmap.offset + base_ptr = tensor.data  
+
+
+## 8.ggml_schedule
+后端调度，分配节点计算。后端分配器的核心是子图切分，整个graph划分成多个subgraph，每个子图分配一个后端,ggml_schedule也负责不同后端之间的数据流转
+调用流程如下:
+- 定义计算图时,通过接口ggml_backend_sched_set_tensor_backend指定tensor的backend
+- 创建调度器ggml_backend_sched_new,其中backends按照优先级顺序排列、
+- 遍历graph,切分subGraph,记录切分子图时需要拷贝的tensor
+- ggml_backend_sched_graph_compute(sched, graph)
+
+创建调度器ggml_backend_sched_new，
+ggml_backend_sched_set_tensor_backend(sched, ggml_tensor, backend_cpu);
