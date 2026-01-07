@@ -144,12 +144,12 @@ struct ggml_cgraph {
 
 ```
 
-**3.1 内存分配**
-内存分配分为图张量内存分配器ggml_galloc_t和图内存申请ggml_new_graph
-ggml_new_graph : 为计算图分配内存
-ggml_galloc_t : 为计算图中的张量分配实际内存
+**3.1 内存分配**  
+内存分配分为图张量内存分配器ggml_galloc_t和图内存申请ggml_new_graph  
+ggml_new_graph : 为计算图分配内存  
+ggml_galloc_t : 为计算图中的张量分配实际内存  
 
-**ggml_new_graph**
+**ggml_new_graph**  
 调用接口ggml_new_graph(ggml_ctx)分配graph内存
 - 根据size计算graph所需内存大小，包含node leaf hash
 - ctx根据size新建graph_obj，插入ggml ctx链表
@@ -343,7 +343,7 @@ ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx)
 
 
 ## 7.ggml_gallocr
-global allocator用于不同后端workspace_mem内存管理。  
+global allocator用于不同后端workspace_buf内存管理。  
 通过预先规划内存布局，最大化内存复用。计算节点和输入节点，采用不同的内存管理策略。其次，使用哈希表张量快速查找  
 
 ggml_backend_alloc_ctx_tensors申请的是权重内存，ggml_gallocr申请每个后端上的计算内存workspace_buf  
@@ -353,9 +353,9 @@ ggml_gallocr的使用流程：ggml_gallocr_new -> ggml_gallocr_reserve -> ggml_g
 - 然后通过最坏情况的计算图来精确估计计算过程中将使用的内存，然后预留这部分内存 (reserve)
 - 最后查询并输出整个分配结果(get_buffer_size)
 
-主要涉及两个结构体ggml_gallocr、ggml_dyn_tallocr
-ggml_gallocr : 图内存分配器,管理所有buft以及
-ggml_dyn_tallocr : 动态张量分配器。相同buft共享一个dyn_tallocr
+主要涉及两个结构体ggml_gallocr、ggml_dyn_tallocr  
+ggml_gallocr : 图内存分配器,管理所有buft以及  
+ggml_dyn_tallocr : 动态张量分配器。相同buft共享一个dyn_tallocr  
 
 内存复用：
 - 无空闲内存 或 空闲内存块size不满足要求，mem_alloc_size.push_back(size)
@@ -371,7 +371,7 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 ```
 **7.2 ggml_gallocr_reserve_n**  
 根据graph规划计算节点所需最小内存，并分配。流程如下  
-- 根据graph统计的node和leaf节点数构建初始化哈希表并init(hash_size =  1.25 * (n_nodes + n_leafs))  
+- 根据graph统计的node和leaf节点数构建初始化哈希表并init(hash_size =  1.25 * (n_nodes + n_leafs))  0.25冗余
 - 初始化动态张量分配器ggml_dyn_tallocr  
 - 对于leaf节点 直接分配内存，统计hash表中view次数以及作为输入n_children次数  
 - 对于node节点 遍历两次，第一次统计子节点数量n_children和视图计数（n_views） ++  
@@ -387,10 +387,17 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 ## 8.ggml_schedule
 后端调度，分配节点计算。后端分配器的核心是子图切分，整个graph划分成多个subgraph，每个子图分配一个后端,ggml_schedule也负责不同后端之间的数据流转
 调用流程如下:
-- 定义计算图时,通过接口ggml_backend_sched_set_tensor_backend指定tensor的backend
-- 创建调度器ggml_backend_sched_new,其中backends按照优先级顺序排列、
+- 定义计算图时,op通过接口ggml_backend_sched_set_tensor_backend指定tensor的backend（optional）
+- 创建调度器ggml_backend_sched_new,其中backends按照优先级顺序排列（必须backends[-1] = cpu_backend）
 - 遍历graph,切分subGraph,记录切分子图时需要拷贝的tensor
-- ggml_backend_sched_graph_compute(sched, graph)
+- ggml_backend_sched_graph_compute(sched, graph)  
 
-创建调度器ggml_backend_sched_new，
-ggml_backend_sched_set_tensor_backend(sched, ggml_tensor, backend_cpu);
+**ggml_backend_sched_new**  
+创建调度器ggml_backend_sched_set_tensor_backend(sched, ggml_tensor, backend_cpu);  
+
+**ggml_backend_sched_split_graph**  
+切分子图流程如下:
+- 遍历graph->leafs 绑定backend_id
+- 遍历graph->nodes , 根据tensor的src中weight的backend，结果和权重相同backend_id
+- 遍历graph->nodes , 根据backend_id切分sched.split 相同id同一个subgraph。当前subgraph记录前一个subgraph的lastnode由于数据传输splits->input
+- split与split.input的backend不同时，插入cp_tensor(仅backend不同)

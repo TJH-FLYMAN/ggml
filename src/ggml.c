@@ -5721,7 +5721,7 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "leaf_%d", cgraph->n_leafs);
         }
-        printf( "leaf %s \n",node->name);
+        // printf( "leaf %s \n",node->name);
         cgraph->leafs[cgraph->n_leafs] = node;
         cgraph->n_leafs++;
     } else {
@@ -5730,7 +5730,7 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "node_%d", cgraph->n_nodes);
         }
-        printf( "node %s \n",node->name);
+        // printf( "node %s \n",node->name);
         cgraph->nodes[cgraph->n_nodes] = node;
         cgraph->n_nodes++;
     }

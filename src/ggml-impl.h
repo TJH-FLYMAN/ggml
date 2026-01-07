@@ -154,7 +154,7 @@ struct ggml_map_custom3_op_params {
 
 // bitset
 
-typedef uint32_t ggml_bitset_t;
+typedef uint32_t ggml_bitset_t; // 32个bool值
 
 static_assert(sizeof(ggml_bitset_t) == 4, "bitset_t constants must be updated");
 #define BITSET_SHR 5 // log2(sizeof(ggml_bitset_t)*8)
