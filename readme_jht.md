@@ -388,16 +388,18 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 后端调度，分配节点计算。后端分配器的核心是子图切分，整个graph划分成多个subgraph，每个子图分配一个后端,ggml_schedule也负责不同后端之间的数据流转
 调用流程如下:
 - 定义计算图时,op通过接口ggml_backend_sched_set_tensor_backend指定tensor的backend（optional）
-- 创建调度器ggml_backend_sched_new,其中backends按照优先级顺序排列（必须backends[-1] = cpu_backend）
-- 遍历graph,切分subGraph,记录切分子图时需要拷贝的tensor
+- 创建调度器ggml_backend_sched_new,其中backends按照优先级顺序排列（从高到低且backends[-1] = cpu_backend）
+- 遍历graph,切分subGraph,记录切分子图时需要拷贝的tensor( hv_tensor_copies )
 - ggml_backend_sched_graph_compute(sched, graph)  
 
 **ggml_backend_sched_new**  
-创建调度器ggml_backend_sched_set_tensor_backend(sched, ggml_tensor, backend_cpu);  
+创建调度器,核心结构体ggml_backend_sched。申请内存并init
+几个参数的大小设置
+1.hv_tensor_copies的size:
 
 **ggml_backend_sched_split_graph**  
 切分子图流程如下:
-- 遍历graph->leafs 绑定backend_id
+- 遍历graph->leafs 绑定backend_id ->hv_tensor_backend_ids
 - 遍历graph->nodes , 根据tensor的src中weight的backend，结果和权重相同backend_id
 - 遍历graph->nodes , 根据backend_id切分sched.split 相同id同一个subgraph。当前subgraph记录前一个subgraph的lastnode由于数据传输splits->input
 - split与split.input的backend不同时，插入cp_tensor(仅backend不同)

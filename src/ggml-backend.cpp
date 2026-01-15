@@ -640,8 +640,8 @@ struct ggml_backend_sched {
 
     // hash map of the nodes in the graph
     struct ggml_hash_set  hash_set;
-    int                 * hv_tensor_backend_ids; // [hash_set.size] tensor对应backen
-    struct ggml_tensor ** hv_tensor_copies;      // [hash_set.size][n_backends][n_copies] 跨后端张量复制
+    int                 * hv_tensor_backend_ids; // [hash_set.size] tensor对应backendid
+    struct ggml_tensor ** hv_tensor_copies;      // [hash_set.size][n_backends][n_copies] 指针数组，记录需要跨后端复制的tensor
 
     int * node_backend_ids; // [graph_size]
     int * leaf_backend_ids; // [graph_size]
@@ -1444,7 +1444,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
     return GGML_STATUS_SUCCESS;
 }
-// ggml_backend_sched_new({backend_gpu, backend_gpu2, backend_cpu}, NULL, num_backends, GGML_DEFAULT_GRAPH_SIZE, false);
+
 ggml_backend_sched_t ggml_backend_sched_new(
         ggml_backend_t * backends,
         ggml_backend_buffer_type_t * bufts,
