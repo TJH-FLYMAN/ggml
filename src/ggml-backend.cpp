@@ -1144,7 +1144,7 @@ static void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct gg
                 split->i_end = i;
                 i_split++;
                 if (i_split >= sched->splits_capacity) {
-                    sched->splits_capacity *= 2;
+                    sched->splits_capacity *= 2; // >16 扩容
                     sched->splits = (ggml_backend_sched_split *)
                         realloc(sched->splits, sched->splits_capacity * sizeof(struct ggml_backend_sched_split));
                     GGML_ASSERT(sched->splits != NULL);

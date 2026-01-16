@@ -395,7 +395,26 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 **ggml_backend_sched_new**  
 创建调度器,核心结构体ggml_backend_sched。申请内存并init
 几个参数的大小设置
-1.hv_tensor_copies的size:
+1.hv_tensor_copies的size:  
+单流水线处理 hash_set.size * n_backends  并行处理 hash_set.size * n_backends * n_copys
+```c
+#define tensor_id_copy(id, backend_id, copy_id) sched->hv_tensor_copies[(id) * sched->n_backends * sched->n_copies + (backend_id) * sched->n_copies + (copy_id)]
+```
+由tensor_id_copy可知hv_tensor_copies的内存布局，以两个tensor(tensor_a tensor_b)、两个backend为例 (hash_set.size = 2, n_backends = 2)  
+
+if parallel:    hv_tensor_copies.size = 2*2*4 = 16  
+    a_cpu_cp0,a_cpu_cp1,a_cpu_cp2,a_cpu_cp3, a_gpu_cp0,a_gpu_cp1,a_gpu_cp2,a_gpu_cp3,  
+    b_cpu_cp0,b_cpu_cp1,b_cpu_cp2,b_cpu_cp3, b_gpu_cp0,b_gpu_cp1,b_gpu_cp2,b_gpu_cp3         
+
+else:   hv_tensor_copies.size = 2*2*1 = 4    tensor_a_cpu,tensor_a_gpu,tensor_b_cpu,tensor_b_gpu  
+
+2.context_buffer_size  
+ctx_size的大小考虑最差情况下,所有subgraph的tensor_cp占用内存以及graph占用内存  
+- graph_size * subGraph_max_input_num * 2 * sizeof(struct ggml_tensor)  ，每个计算op都是单个subgraph,一个op最多6输入6输出  
+- ggml_graph_overhead_custom(graph_size, false);  graph大小  
+
+3.splits、splits_capacity
+初始默认16个子图。后续根据需要翻倍扩容
 
 **ggml_backend_sched_split_graph**  
 切分子图流程如下:
