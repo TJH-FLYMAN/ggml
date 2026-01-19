@@ -689,7 +689,8 @@ static int ggml_backend_sched_backend_id(ggml_backend_sched_t sched, ggml_backen
     }
     return -1;
 }
-
+// 取tensor.buft
+// 关联buft.device.iface.supports_buft、buft.device.iface.supports_op
 static int ggml_backend_sched_backend_from_buffer(ggml_backend_sched_t sched, const struct ggml_tensor * tensor, const struct ggml_tensor * op) {
     ggml_backend_buffer_t buffer = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
     if (buffer == NULL) {
@@ -698,9 +699,9 @@ static int ggml_backend_sched_backend_from_buffer(ggml_backend_sched_t sched, co
 
     // find highest prio backend that supports the buffer type and the op
     for (int i = 0; i < sched->n_backends; i++) {
-        if (ggml_backend_supports_buft(sched->backends[i], buffer->buft) &&
-            ggml_backend_supports_op(sched->backends[i], op)) {
-            return i;
+        if (ggml_backend_supports_buft(sched->backends[i], buffer->buft) && //后端可以直接访问数据
+            ggml_backend_supports_op(sched->backends[i], op)) { //支持op计算
+            return i; // 高优先级后端 先选择。满足要求，直接返回
         }
     }
 
@@ -870,7 +871,7 @@ static void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct gg
         /* .no_alloc =   */ true
     };
 
-    ggml_free(sched->ctx);
+    ggml_free(sched->ctx); // ?  calloc sched->ctx= NULL, free有什么作用?
 
     sched->ctx = ggml_init(params);
     if (sched->ctx == NULL) {
