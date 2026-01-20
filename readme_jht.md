@@ -211,10 +211,10 @@ ggml_build_forward_expand(gf, ggml_cpy(ctx, Kcur, k));
 ```
 
 ## 4.ggml_backend
-在介绍后端之前，先介绍后端注册表 。后端注册通过维护一个static ggml_backend_registry实现,允许运行时动态加载后端,也可静态定义。
+ggml后端设计通过5层抽象架构，分别是Backend Registry → Device → Backend (Stream) → Buffer Type → Buffer
 
 **4.0.1 ggml_backend_registry**   
-
+后端注册通过维护一个static ggml_backend_registry实现,允许运行时动态加载后端,也可静态定义。
 ```c
 struct ggml_backend_registry {
     std::vector<ggml_backend_reg_entry> backends; // 后端容器
