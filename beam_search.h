@@ -241,7 +241,8 @@ public:
                     if (finish_result_[i].size() == (size_t)beam_) { sort_result(i); }
                 }
             }
-
+            // 结果重排
+            // 使得best_beams_ 递增排序
             for (int j = 0; j < beam_; ++j) {
                 if ((int)best_beams_[i*beam_+j] == j) continue;
                 for (int k = 0; k < beam_; ++k) {

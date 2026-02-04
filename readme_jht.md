@@ -1,57 +1,48 @@
 # ggml
 
-## ggml的核心概念
+## ggml overview
 gguf : ggml模型格式
-
-ggml_context: 一个装载各类对象 (如张量、计算图、其他数据) 的“容器”  
-
-ggml_cgraph: 计算图的表示，可以理解为将要传给后端的“计算执行顺序”。  
-
-ggml_backend: 执行计算图的接口，有很多种类型: CPU (默认) 、CUDA、Metal (Apple Silicon) 、Vulkan、RPC 等等
-
-ggml_backend_buffer_type: 表示一种缓存，可以理解为连接到每个 ggml_backend 的一个“内存分配器”。比如你要在 GPU 上执行计算，那你就需要通过一个buffer_type (通常缩写为 buft ) 去在 GPU 上分配内存  
-
-ggml_backend_buffer: 表示一个通过 buffer_type 分配的缓存。需要注意的是，一个缓存可以存储多个张量数据。 ggml中一切数据（context、dataset、weight、output…）都被存放在 buffer 中。ggml使用buffer进行集成承载不同的数据，实现多种后端（CPU、GPU）设备内存的统一管理。ggml_backend_buffer是实现不同类型数据在多种后端上进行统一的接口对象  
-
-ggml_gallocr: 表示一个给计算图分配内存的分配器，可以给计算图中的张量进行高效的内存分配。  
-
-ggml_backend_sched: 后端调度器，使得多种后端可以并发使用，大模型或多 GPU 推理时，实现跨硬件平台地分配计算任务 (CPU 加 GPU 混合计算、CPU和NPU混合计算)。调度器还能自动将 GPU 不支持的算子转移到 CPU 上，来确保最优的资源利用和兼容性。  
+ggml_context: ggml核心数据结构，定义tensors_meta、tensors_buf  
+ggml_cgraph: 计算图的表示，定义后端op计算执行顺序
+ggml_backend: graph不同硬件计算抽象表示,  包含计算与内存管理, CPU (默认) 、CUDA、Metal (Apple Silicon) 、Vulkan、RPC 等等
+ggml_backend_buffer_type: 后端buf描述符, 对应 ggml_backend 的mem_Management
+ggml_backend_buffer: buffer_type实际分配的buf。一个ggml_backend_buffer可以存储多个张量数据, ggml数据（context、dataset、weight、output…）都存放在 buffer 中
+ggml_gallocr: 计算图的mem_Management，用于不同后端张量内存管理  
+ggml_backend_sched: 后端调度器  
 
 ## 1. GGUF
-gguf模型解析，保存到gguf_context
-### GGUF文件结构
-```
-[Header] -> [Metadata] -> [Tensor Info] -> [Tensor Data]
-```
-**gguf-header**  
+gguf模型，解析后保存到gguf_context  
+**1.1 GGUF文件结构**  
+[ Header ] -> [ Metadata ] -> [ Tensor Info ] -> [ Tensor Data ]  
+gguf-header   
 - magic;           GGUF的ASCII码 0x46554747  
 - version;         GGUF版本 目前是3  
 - n_tensor;        tensor数量  
 - n_kv;            metadata数量(kv对数量)    
 
-**metadata**  
+metadata   
 - gguf_metadata_kv_t metadata_kv[metadata_kv_count];      
 key(string)  
 value   
     a. NO_array元素在内存中gguf_type(int32_t)、value_len(uint64_t)、value   
     b. array在内存中GGUF_TYPE_ARRAY,gguf_type(int32_t)、value_len、value;gguf_type指数组内元素类型  
 
-**tensor_info**   
+tensor_info   
 - name_len(uint64) + name(string) 
 - n_dims(4字节)  
 - dims[4](uint64)、
 - datatype(uint32)、  
 - offset(uint64,偏移量32位对齐)  
 
-**Tensor_Data**  
+Tensor_Data 
 - offset : 读取完tensor_info数据后,ftell(fp)结果alignment对齐后为tensor数据部分的offset;  
 - size :  single_tensor_size = sizeof(datatype) * np.prod(dims), 结果alignemnet字节对齐。遍历tensor累加得到size  
 
-**gguf_context**  
-head(version) + metadata + tensor_info + Tensor_Data.offset + Tensor_Data.size + alignment + data= gguf_context    
+**1.2 gguf_context**  
+gguf_context = head(version) + metadata + tensor_info + Tensor_Data.offset + Tensor_Data.size + alignment + data    
 
 
-**gguf模型加载**    
+**1.3 gguf模型加载**    
 ```c
 // 1. 根据model path 创建gguf_context
 std::string model_fname = "model.gguf";
@@ -67,23 +58,15 @@ gguf_context * gguf_ctx = gguf_init_from_file(model_fname.c_str(), gguf_params);
 gguf_context * gguf_ctx = gguf_init_empty();
 ```
 
-**gguf_init_from_file_impl**  
-1. 分配并初始化gguf_ctx  
-2. 如果gguf_params.ctx!=nullptr,初始化ggml_ctx并分配内存池，用于存储模型tensor meta数据(gguf_params.no_alloc = false时额外分配tensor内存)。 
+`gguf_init_from_file_impl`  
+1. 分配并初始化struct gguf_ctx  
+2. 如果gguf_params.ctx!=nullptr,初始化ggml_ctx并根据size分配内存池，用于存储模型tensor meta数据(gguf_params.no_alloc = false时额外分配tensor内存)。 
 
-## 2.ggml_context 
-- mem_size                      模型权重大小
-- mem_buffer                    申请align(mem_size,64)大小的的buf
-- mem_buffer_owned              buf所有权。是否ctx拥有，或者外部传递
-- no_alloc                      是否禁止分配（用于共享内存模式）
-- n_objects                     ctx拥有的object数量
-- objects_begin,                容器链表头
-- objects_end                   容器链表尾
-
+## 2. ggml_context  
 ctx通过链表管理所有tensor;每个tensor_data持有两个head信息，ggml_object ggml_tensor  
 model_data也视为ggml_object,并为ctx的头节点。+1 指 model_data对应的ggml_tensor  
 
-**ggml_new_tensor**
+**2.1 ggml_new_tensor**
 为每个tensor在ggml_context内存池分配内存。分配内存包括ggml_object ggml_tensor tensor_data
 1. 为ggml_object分配内存  
 在ggml_context的内存池中分配object对象内存
@@ -99,7 +82,8 @@ struct ggml_tensor * const tensor_new = (char *)ctx->mem_buffer + obj->offs
 3. 为tensor_data分配内存  
 if !no_alloc 。分配tensor_data内存
 
-**ggml_context**
+**2.2 ggml_context**
+获取ggml_context  
 ```c
 // 1. 调用接口
 // no_alloc = true : 只分配tensor metadata ; 
@@ -123,53 +107,42 @@ a.  gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr; ->ini
 b.  gguf_init_params.ctx == nullptr; 独立初始化ggml_context 。tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列  abcabcabc...abc  
 
 ## 3.ggml_cgraph
-graph构建流程
-- ggml_cgraph内存分配
-- 使用算子函数连接weight参数、创建中间计算节点 ，算子函数调用不会立即执行计算
+graph需要自定义构建，流程:  
+- 分配ggml_cgraph内存
+- 定义计算图，使用算子函数连接weight参数、创建中间计算节点
 - 使用ggml_build_forward_expand()函数构建计算图
-- 默认size = 2048
-```c
-struct ggml_cgraph {
-    int size;    // maximum number of nodes/leafs/grads/grad_accs
-    int n_nodes;    // 计算节点数
-    int n_leafs;    // 叶子节点数
-    struct ggml_tensor ** nodes;   // 计算节点，指中间运算结果 ，数组中的元素是指向tensor的指针。
-    struct ggml_tensor ** grads;     
-    struct ggml_tensor ** grad_accs; 
-    struct ggml_tensor ** leafs;    // 叶子节点，权重、常量、输入等 ，数组中的元素是指向tensor的指针。
-    struct ggml_hash_set visited_hash_set; //跟踪已访问张量的哈希集合
+- 默认最大节点数size = 2048  
 
-    enum ggml_cgraph_eval_order order; //递归时src数组遍历正序或逆序
-};
+node为计算节点，指中间运算结果 ，数组中的元素是指向tensor的指针  
+leaf为权重、常量、输入等  
+ggml_cgraph_eval_order代表递归时src数组遍历正序或逆序，影响拓扑排序  
 
-```
 
 **3.1 内存分配**  
 内存分配分为图张量内存分配器ggml_galloc_t和图内存申请ggml_new_graph  
 ggml_new_graph : 为计算图分配内存  
 ggml_galloc_t : 为计算图中的张量分配实际内存  
 
-**ggml_new_graph**  
-调用接口ggml_new_graph(ggml_ctx)分配graph内存
+`ggml_new_graph(ggml_ctx)`
 - 根据size计算graph所需内存大小，包含node leaf hash
 - ctx根据size新建graph_obj，插入ggml ctx链表
 - 计算包含node leaf hash等在graph_obj.data中的起始地址
 - 结果返回ggml_cgraph*
 
 
-**3.2 定义计算节点**
-例如定义y = a * w + b。初始化ax y的src和op_type
+**3.2 定义计算节点**  
+例如定义y = d( a * w + b)。初始化ax y的src和op_type  
 ```c
-struct ggml_tensor * ax = ggml_mul(ggml_ctx, a, w);
-struct ggml_tensor * y = ggml_add(ggml_ctx, ax, b);
-struct ggml_tensor * res_tensor = ggml_mul(ggml_ctx, y, d);
+struct ggml_tensor* aw          = ggml_mul(ggml_ctx, a, w);
+struct ggml_tensor* y           = ggml_add(ggml_ctx, ax, b);
+struct ggml_tensor* res_tensor  = ggml_mul(ggml_ctx, y, d);
 ```
-**3.3 构建计算图**
-    
+
+**3.3 构建计算图**  
 ggml_visit_parents从存放结果张量为根节点，每个节点依赖的张量为子节点，根据计算关系逆序遍历计算图  
 遍历到的节点分别拷贝到ggml_cgraph nodes和leafs  
 
-ggml_visit_parents(cgraph, res_tensor)判断逻辑
+ggml_visit_parents(cgraph, res_tensor)判断逻辑  
 - 从res_tensor开始，遍历所有依赖张量,tensor.src[:], cgraph.order决定tensor.src[:]遍历正序/逆序。默认正序
 - hash_set记录已访问张量，避免重复遍历
 - leafs: tensor.op == NULL && !param
@@ -211,7 +184,7 @@ ggml_build_forward_expand(gf, ggml_cpy(ctx, Kcur, k));
 ```
 
 ## 4.ggml_backend
-ggml后端设计通过5层抽象架构，分别是Backend Registry → Device → Backend (Stream) → Buffer Type → Buffer
+ggml后端通过5层抽象架构设计，分别是Backend Registry → Device → Backend → Buffer Type → Buffer
 
 **4.0.1 ggml_backend_registry**   
 后端注册通过维护一个static ggml_backend_registry实现,允许运行时动态加载后端,也可静态定义。
@@ -228,40 +201,41 @@ struct ggml_backend_registry {
 
 **4.0.2 动态加载**  
 自动对指定路径中的libggml-{backend_name}-*.so评分，获取best backend，针对.so类型后端文件，保留dlopen句柄  
-指定路径 ./  和  exec_path  
+指定路径 [./ , exec_path]
 
 **4.0.3 静态注册**  
+get_reg()函数，返回静态注册表对象  
 ```
 static ggml_backend_registry & get_reg() {
     static ggml_backend_registry reg;
     return reg;
 }
 ```
-ggml_backend_registry构造函数自动完成后端、设备注册。  
-- register_backend(ggml_backend_*_reg()) 注册后端, ggml_backend_*_reg()定义并返回static ggml_backend_reg对象，register_backend查询并插入注册表backends容器  
-- register_backend中调用register_device()，遍历后端设备返回static ggml_backend_device对象，查询并插入注册表devices容器。(一种后端允许多个device，例如多卡gpu)   
-- ggml_backend_*_reg()预定义
+预定义ggml_backend_*_reg()函数，返回static ggml_backend_reg对象  
+ggml_backend_registry-Constructor基于register_backend()完成后端、设备注册  
+1. register_backend(ggml_backend_*_reg()) 注册后端, static ggml_backend_reg插入注册表backends容器  
+2. register_backend注册backend后调用register_device()，遍历后端设备返回static ggml_backend_device对象，查询并插入注册表devices容器。(一种后端允许多个device，例如多卡gpu)   
 
 
 以cpu后端为例  
-cpu后端注册属于顶层接口，cpu_reg.iface包含获取cpu设备attr查询（name 、count）以及cpu_device实例获取  
+cpu后端注册属于顶层接口，cpu_reg.iface包含获取cpu设备attr查询（name 、count）以及获取cpu_device实例  
 cpu设备属于中间层。cpu_reg.device.iface包含device attr查询、后端初始化  
 cpu后端属于底层，包含图创建、执行、tensor操作等  
 cpu_reg —>  cpu_device -> cpu_device_iface -> cpu_backend +  cpu_backend_buffer_type_t  
 
 各实例关系:
-- cpu_reg
-- cpu_device关联cpu_reg
+- cpu_reg关联cpu_backend
 - cpu_backend关联cpu_device
+- cpu_device关联cpu_reg
 
 具体关系查看docs/ggml_backend.jpg
 
 **4.1 ggml_backend**  
 初始化ggml_backend，根据device_reg关联device，并返回ggml_backend对象。详见ggml_backend_cpu_init
 
-**4.2 ggml_backend_cpu**  
+**4.2.1 ggml_backend_cpu**  
 
-获取cpubackend
+获取cpu backend  
 ```c
 //方式1 直接调用接口
 ggml_backend_t backend = ggml_backend_cpu_init();
@@ -282,11 +256,11 @@ ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
 ```
 
 ## 5.ggml_backend_buffer_type
-buffer_type可以理解为一个类型描述符（buffer descriptor）也是backend的内存分配器, 描述内存类型、内存对齐字节数和以及device上如何alloc、free
-完成内存对齐、内存分配、buf大小不超过设备限制、以及不同后端之间数据传输
+buffer_type = buf描述符（buffer descriptor） = backend的内存分配器, 描述内存类型、内存对齐字节数和以及device上如何alloc、free  
+iface完成内存对齐、内存分配、以及不同后端之间数据传输  
 ```
 struct ggml_backend_buffer_type {
-    struct ggml_backend_buffer_type_i  iface; // 一组接口函数，包括获取buft_name、alloc、get_align、get_max_size、get_alloc_size、is_Host
+    struct ggml_backend_buffer_type_i  iface; // 一组接口函数
     ggml_backend_dev_t device; // 关联的后端设备
     void * context;
 };
