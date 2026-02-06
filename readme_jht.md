@@ -28,11 +28,11 @@ value
     b. array在内存中GGUF_TYPE_ARRAY,gguf_type(int32_t)、value_len、value;gguf_type指数组内元素类型  
 
 tensor_info   
-- name_len(uint64) + name(string) 
+- name_len(uint64) + name(string)   
 - n_dims(4字节)  
-- dims[4](uint64)、
-- datatype(uint32)、  
-- offset(uint64,偏移量32位对齐)  
+- dims \[4\](uint64)  
+- datatype(uint32)    
+- offset(uint64,偏移量32位对齐)    
 
 Tensor_Data 
 - offset : 读取完tensor_info数据后,ftell(fp)结果alignment对齐后为tensor数据部分的offset;  
@@ -184,10 +184,32 @@ ggml_build_forward_expand(gf, ggml_cpy(ctx, Kcur, k));
 ```
 
 ## 4.ggml_backend
-ggml后端通过5层抽象架构设计，分别是Backend Registry → Device → Backend → Buffer Type → Buffer
+ggml后端通过5层抽象架构设计，分别是
+Backend Registry → Device → Backend  
+Backend Registry → Device → Buffer Type → Buffer  
+
+Backend Registry 管理多个 Backend Registration  
+每个 Registration 包含一个或多个 Device  
+Device 可初始化 Backend 实例  
+Device 提供 Buffer Type  
+Buffer Type 负责分配具体的 Buffer  
+
+以cpu后端为例  
+cpu后端注册属于顶层接口，cpu_reg.iface包含获取cpu设备attr查询（name 、count）以及获取cpu_device实例  
+cpu设备属于中间层。cpu_reg.device.iface包含device attr查询、后端初始化、获取Buffer Type  
+cpu后端属于底层，cpu_reg.device.iface.init_backend.iface包含图创建、执行、tensor计算同步等  
+cpu_reg —>  cpu_device -> cpu_device_iface -> cpu_backend +  cpu_backend_buffer_type_t  
+
+各实例关系:
+- cpu_reg 通过 iface.get_device 获取 cpu_device 实例；
+- cpu_device 包含 reg 字段指向 cpu_reg（设备归属于注册器） 
+- cpu_device 通过 iface.init_backend 创建 cpu_backend 实例 
+- cpu_backend 包含 device 字段指向 cpu_device（后端实例归属于设备）
+- 双向引用, 下层结构通过指针反向引用上层，便于访问父级资源
+具体关系查看docs/ggml_backend.jpg docs/ggml_backend.png
 
 **4.0.1 ggml_backend_registry**   
-后端注册通过维护一个static ggml_backend_registry实现,允许运行时动态加载后端,也可静态定义。
+后端通过注册机制加入全局注册表,由全局注册表 ggml_backend_registry 统一管理,允许运行时动态加载后端,也可静态定义。
 ```c
 struct ggml_backend_registry {
     std::vector<ggml_backend_reg_entry> backends; // 后端容器
@@ -199,50 +221,105 @@ struct ggml_backend_registry {
 };
 ```
 
-**4.0.2 动态加载**  
-自动对指定路径中的libggml-{backend_name}-*.so评分，获取best backend，针对.so类型后端文件，保留dlopen句柄  
-指定路径 [./ , exec_path]
-
-**4.0.3 静态注册**  
-get_reg()函数，返回静态注册表对象  
+获取注册表
+get_reg()函数，返回静态全局注册表对象  
 ```
 static ggml_backend_registry & get_reg() {
     static ggml_backend_registry reg;
     return reg;
 }
 ```
-预定义ggml_backend_*_reg()函数，返回static ggml_backend_reg对象  
-ggml_backend_registry-Constructor基于register_backend()完成后端、设备注册  
-1. register_backend(ggml_backend_*_reg()) 注册后端, static ggml_backend_reg插入注册表backends容器  
-2. register_backend注册backend后调用register_device()，遍历后端设备返回static ggml_backend_device对象，查询并插入注册表devices容器。(一种后端允许多个device，例如多卡gpu)   
+
+枚举后端reg ggml_backend_reg_count、ggml_backend_reg_get  
+枚举dev     ggml_backend_dev_count、ggml_backend_dev_get  
 
 
-以cpu后端为例  
-cpu后端注册属于顶层接口，cpu_reg.iface包含获取cpu设备attr查询（name 、count）以及获取cpu_device实例  
-cpu设备属于中间层。cpu_reg.device.iface包含device attr查询、后端初始化  
-cpu后端属于底层，包含图创建、执行、tensor操作等  
-cpu_reg —>  cpu_device -> cpu_device_iface -> cpu_backend +  cpu_backend_buffer_type_t  
+**4.0.2 动态加载**
+通过 ggml_backend_load 打开动态库，查找符号 ggml_backend_score（0 表示当前系统不支持该后端）和 ggml_backend_init，调用后者获取 ggml_backend_reg_t 并注册  
 
-各实例关系:
-- cpu_reg关联cpu_backend
-- cpu_backend关联cpu_device
-- cpu_device关联cpu_reg
+```c
+#include "ggml-backend.h"
+//加载单个so后端
+ggml_backend_load(so_path)
+//批量加载
+ggml_backend_load_all_from_path(foler_path)
+//自动加载
+ggml_backend_load_all()
+```
 
-具体关系查看docs/ggml_backend.jpg
+ggml_backend_load_all自动对指定路径[./ , exec_path]中的libggml-{backend_name}-*.so评分，获取best backend，so保留dlopen句柄  
 
-**4.1 ggml_backend**  
-初始化ggml_backend，根据device_reg关联device，并返回ggml_backend对象。详见ggml_backend_cpu_init
+其中动态库编译时需使用宏 GGML_BACKEND_DL_IMPL(backend_reg_fn) 导出 ggml_backend_init 符号  
+
+**4.0.3 静态注册**  
+各后端实现ggml_backend_*_reg()函数，返回static ggml_backend_reg对象  
+ggml_backend_registry构造函数调用后端提供的 ggml_backend_<name>_reg() 函数后端、设备注册  
+1. static ggml_backend_reg插入注册表backends容器  
+2. register_device()，遍历后端设备返回static ggml_backend_device对象，查询并插入注册表devices容器。(一种后端允许多个device，例如多卡gpu)   
+
+注意:
+backends容器中存储后端reg对象和so dlopen句柄（ggml_backend_reg而非ggml_backend），devices容器中存储后端device对象
+实际的后端通过device.iface.init_backend 初始化
+
+**4.1 ggml_backend_device**
+ggml_backend_device连接后端注册表与实际执行后端,device关联后端reg对象,且device指针,需要通过接口函数访问
+
+```c
+struct ggml_backend_device {  
+    struct ggml_backend_device_i iface;  // 设备接口函数  
+    ggml_backend_reg_t reg;              // 所属后端注册表  
+    void * context;                      // 设备特定上下文  
+};
+```
+
+以cpu device.iface为例  
+```c
+static const struct ggml_backend_device_i ggml_backend_cpu_device_i = {
+    /* .init_backend         = */ ggml_backend_cpu_device_init_backend,  // 获取后端
+    /* .get_buffer_type      = */ ggml_backend_cpu_device_get_buffer_type, //获取buffer_type
+    /* .buffer_from_host_ptr = */ ggml_backend_cpu_device_buffer_from_host_ptr, //传参buf size初始化内存池 ggml_backend_buffer
+    /* .supports_op          = */ ggml_backend_cpu_device_supports_op,  // 检查op->op op->src是否后端支持
+    /* .supports_buft        = */ ggml_backend_cpu_device_supports_buft,   // 检查buft是否后端支持
+};
+```
+
+获取device ,上下层架构双向引用, 获取方式很多
+```c
+// 1.枚举获取 或根据idx 获取
+size_t count = ggml_backend_dev_count();  
+for (size_t i = 0; i < count; i++) {  
+    ggml_backend_dev_t dev = ggml_backend_dev_get(i);  
+}
+// 2.根据backend_name获取
+const char* backend_name = "CPU";
+ggml_backend_dev_t dev = ggml_backend_dev_by_name(backend_name);
+// 3.根据backend_type获取
+ggml_backend_dev_t dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+// 4.根据backend_reg_t获取
+size_t dev_count = ggml_backend_reg_dev_count(reg);  
+for (size_t i = 0; i < dev_count; i++) {  
+    ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, i);  
+}
+```
+
+
+**4.2 ggml_backend**  
+ggml_backend 是 GGML 中用于抽象不同硬件执行后端的核心接口, ggml_backend 结构体包含 GUID、接口 ggml_backend_i、device引用与context  
+
+GUID 唯一标识backend  
+iface 后端接口  
+device 关联设备，用于操作设备iface接口  
+context 以cpuBackend.ctx为例，存储线程池、线程数、cpu上计算图中间数据buf以及size、abort回调等  
 
 **4.2.1 ggml_backend_cpu**  
-
 获取cpu backend  
 ```c
 //方式1 直接调用接口
 ggml_backend_t backend = ggml_backend_cpu_init();
 
-//方式2 先根据名称获取dev，根据dev初始化backend
+//方式2 获取dev，根据dev初始化backend  
 const char* backend_name = "CPU";
-ggml_backend_dev_t dev = ggml_backend_dev_by_name(backend_name); // 只是检查device是否存在，返回dev
+ggml_backend_dev_t dev = ggml_backend_dev_by_name(backend_name); // 检查device是否存在，返回dev
 if (dev == nullptr) {
     fprintf(stderr, "%s: ERROR: backend %s not found, available:\n", __func__, backend_name.c_str());
 }
@@ -255,10 +332,10 @@ ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(dev);
 ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr); 
 ```
 
-## 5.ggml_backend_buffer_type
+**4.3 ggml_backend_buffer_type**
 buffer_type = buf描述符（buffer descriptor） = backend的内存分配器, 描述内存类型、内存对齐字节数和以及device上如何alloc、free  
 iface完成内存对齐、内存分配、以及不同后端之间数据传输  
-```
+```c
 struct ggml_backend_buffer_type {
     struct ggml_backend_buffer_type_i  iface; // 一组接口函数
     ggml_backend_dev_t device; // 关联的后端设备
@@ -266,27 +343,24 @@ struct ggml_backend_buffer_type {
 };
 ```
 
-**5.1 获取buft**
-完成初始化后端，根据后端设备获取buft并绑定设备
+每个buffer type 都有一组 ggml_backend_buffer_type_i 接口函数  
+    get_name: 返回 buffer type 名称  
+    alloc_buffer: 分配指定大小的缓冲区  
+    get_alignment: 返回内存对齐要求  
+    get_max_size: 返回最大可分配大小（可选）  
+    get_alloc_size: 计算张量实际占用大小（可选）  
+    is_host: 判断是否为主机内存（可选）  
+
+
+获取buft
 以cpu为例
 ```c
-// backend -> buft
-ggml_backend_buffer_type_t ggml_backend_get_default_buffer_type(ggml_backend_t backend) {
-    return ggml_backend_dev_buffer_type(backend->device);
-}
-ggml_backend_buffer_type_t ggml_backend_dev_buffer_type(ggml_backend_dev_t device) {
-    return device->iface.get_buffer_type(device); // 返回static struct ggml_backend_buffer_type，device虚参
-}
-
-//buft.alloc_buf
-static ggml_backend_buffer_t ggml_backend_cpu_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
-    void * data = ggml_aligned_malloc(size);
-    return ggml_backend_buffer_init(buft, ggml_backend_cpu_buffer_i, data, size); // new ggml_backend_buffer ，传入ptr、size、iface、buft
-}
+// backend -> buft  返回static struct ggml_backend_buffer_type
+ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backend); //backend->device->iface.get_buffer_type(device)
 ```
 
 
-## 6. ggml_backend_buffer
+**4.4 ggml_backend_buffer**
 实际存放数据的buf
 ```c
 struct ggml_backend_buffer {
@@ -316,7 +390,7 @@ ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx)
 ```
 
 
-## 7.ggml_gallocr
+## 5.ggml_gallocr
 global allocator用于不同后端workspace_buf内存管理。  
 通过预先规划内存布局，最大化内存复用。计算节点和输入节点，采用不同的内存管理策略。其次，使用哈希表张量快速查找  
 
@@ -335,7 +409,7 @@ ggml_dyn_tallocr : 动态张量分配器。相同buft共享一个dyn_tallocr
 - 无空闲内存 或 空闲内存块size不满足要求，mem_alloc_size.push_back(size)
 - 存在空闲内存块且size满足要求(大于且最靠近)。切割free_block,剩余free部分作为新的free_block
 
-**7.1 ggml_gallocr_new_n**
+**5.1 ggml_gallocr_new_n**
 分配gallocr内存;分配gallocr.bufs gallocr.buffers gallocr.buf_tallocs内存，calloc初始化0
 ```c
 // 获取一个gallocr 根据backend.device.iface.buft
@@ -343,7 +417,7 @@ ggml_gallocr_t allocr = ggml_gallocr_new(buft)
 // 获取n_bufs个gallocr , buft数组
 ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs)
 ```
-**7.2 ggml_gallocr_reserve_n**  
+**5.2 ggml_gallocr_reserve_n**  
 根据graph规划计算节点所需最小内存，并分配。流程如下  
 - 根据graph统计的node和leaf节点数构建初始化哈希表并init(hash_size =  1.25 * (n_nodes + n_leafs))  0.25冗余
 - 初始化动态张量分配器ggml_dyn_tallocr  
@@ -352,13 +426,13 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
     第二次直接分配内存并更新hash表，拓扑顺序分配内存：确保父节点在子节点之前分配 --  
 - 对于view= 0 ,n_children=0. 内存块回归free内存池  
 
-**7.3 ggml_gallocr_alloc_graph**  
+**5.3 ggml_gallocr_alloc_graph**  
 根据reserve阶段的规划，为graph中张量设置 data 指针  
 - 根据tensor_hashmap.buf_id获取buft的base_ptr  
 - tensor_hashmap.offset + base_ptr = tensor.data  
 
 
-## 8.ggml_schedule
+## 6.ggml_schedule
 后端调度，分配节点计算。后端分配器的核心是子图切分，整个graph划分成多个subgraph，每个子图分配一个后端,ggml_schedule也负责不同后端之间的数据流转
 调用流程如下:
 - 定义计算图时,op通过接口ggml_backend_sched_set_tensor_backend指定tensor的backend（optional）

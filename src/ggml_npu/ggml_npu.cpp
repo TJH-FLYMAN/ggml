@@ -69,7 +69,7 @@ struct ggml_backend_plan_npu {
 };
 
 static ggml_backend_graph_plan_t ggml_backend_npu_graph_plan_create(ggml_backend_t backend, const struct ggml_cgraph * cgraph) {
-    // 未实现
+    
     return npu_plan;
 }
 

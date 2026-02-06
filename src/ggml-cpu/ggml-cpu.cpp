@@ -369,6 +369,11 @@ static ggml_backend_buffer_t ggml_backend_cpu_device_buffer_from_host_ptr(ggml_b
     GGML_UNUSED(max_tensor_size);
 }
 
+// 检查device是否支持op
+// 1.reshape view permute transpose 基本操作支持
+// 2.extra_buffer_type支持的op
+// 3.src[i]的buffer是host buffer
+// 4.某些量化op不支持
 static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const struct ggml_tensor * op) {
     const struct ggml_tensor * src0 = op->src[0];
     const struct ggml_tensor * src1 = op->src[1];
@@ -423,7 +428,7 @@ static bool ggml_backend_cpu_device_supports_buft(ggml_backend_dev_t dev, ggml_b
 }
 
 static const struct ggml_backend_device_i ggml_backend_cpu_device_i = {
-    /* .get_name             = */ ggml_backend_cpu_device_get_name,
+    /* .get_name             = */ ggml_backend_cpu_device_get_name, // return "CPU";
     /* .get_description      = */ ggml_backend_cpu_device_get_description,
     /* .get_memory           = */ ggml_backend_cpu_device_get_memory,
     /* .get_type             = */ ggml_backend_cpu_device_get_type,

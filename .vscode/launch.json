@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug gpt-2-sched",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/home/jhtang3/ggml/ggml/build/bin/gpt-2-sched",// 指定调试文件目录
+            "args": [], // 需要的命令行参数
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",//设置工作目录
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "miDebuggerPath": "/usr/bin/gdb"  // 指定 GDB 的路径
+        }
+    ]
+}
