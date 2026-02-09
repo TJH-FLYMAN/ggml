@@ -638,8 +638,8 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         // + 1指链表头节点,模型权重
         const size_t mem_size =
             params.no_alloc ?
-            (n_tensors    )*ggml_tensor_overhead() :
-            (n_tensors + 1)*ggml_tensor_overhead() + ctx->size;
+            (n_tensors    )*ggml_tensor_overhead() :    //true
+            (n_tensors + 1)*ggml_tensor_overhead() + ctx->size; //false
 
         struct ggml_init_params pdata = {
             /*mem_size   =*/ mem_size,

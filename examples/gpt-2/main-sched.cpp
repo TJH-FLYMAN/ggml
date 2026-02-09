@@ -906,7 +906,7 @@ int main(int argc, char ** argv) {
     const int64_t t_main_start_us = ggml_time_us();
 
     gpt_params params;
-    params.model = "/home/jhtang3/ggml/ggml/build/models/gpt-2-117M/ggml-model.bin"; 
+    params.model = "/home/jhtang3/ggml/ggml/models/gpt-2-117M/ggml-model-gpt-2-117M.bin"; 
 
     if (gpt_params_parse(argc, argv, params) == false) {
         return 1;

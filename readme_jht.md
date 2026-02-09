@@ -101,10 +101,11 @@ struct ggml_init_params params = {
 struct ggml_context* ctx = ggml_init(params); 
 ```
  
-ggml_context的mem_buffer内存布局有两种:  
-a.  gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr; ->init ggml_ctx 
-    gguf_init_from_file中。先为所有tensor_data分配整块内存，后续ggml_new_tensor，需set(no_alloc,true)时，只分配metadata内存。         Abcbcbcbcbc  
-b.  gguf_init_params.ctx == nullptr; 独立初始化ggml_context 。tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列  abcabcabc...abc  
+ggml_context中weight_buffer内存布局有两种:  
+a.  gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr; ->init ggml_ctx(在gguf_init_from_file中init ggml_ctx)
+    gguf_init_from_file中。先为所有tensor_data分配整块内存，后续ggml_new_tensor，需set(no_alloc,true)时，只分配metadata内存。tensor_data根据off在首个obj中取数据         Abcbcbcbcbc  
+b.  gguf_init_params.ctx == nullptr( 单独init ggml_context) 
+    需要单独为每个weight new tensor ,tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列  abcabcabc...abc  
 
 ## 3.ggml_cgraph
 graph需要自定义构建，流程:  
@@ -391,13 +392,14 @@ ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx)
 
 
 ## 5.ggml_gallocr
-global allocator用于不同后端workspace_buf内存管理。  
+gallocr(graph allocator)用于graoh中不同后端workspace_buf内存管理。  
 通过预先规划内存布局，最大化内存复用。计算节点和输入节点，采用不同的内存管理策略。其次，使用哈希表张量快速查找  
+
 
 ggml_backend_alloc_ctx_tensors申请的是权重内存，ggml_gallocr申请每个后端上的计算内存workspace_buf  
 
 ggml_gallocr的使用流程：ggml_gallocr_new -> ggml_gallocr_reserve -> ggml_gallocr_alloc_graph -> ggml_gallocr_get_buffer_size
-- 整个流程从后端缓冲区类型出发，创建一个专门用于计算图内存管理的分配器gallocr (gallocr_new)
+- 整个流程从buffer type出发，创建一个专门用于计算图内存管理的分配器gallocr (gallocr_new)
 - 然后通过最坏情况的计算图来精确估计计算过程中将使用的内存，然后预留这部分内存 (reserve)
 - 最后查询并输出整个分配结果(get_buffer_size)
 
@@ -471,3 +473,4 @@ ctx_size的大小考虑最差情况下,所有subgraph的tensor_cp占用内存以
 - 遍历graph->nodes , 根据tensor的src中weight的backend，结果和权重相同backend_id
 - 遍历graph->nodes , 根据backend_id切分sched.split 相同id同一个subgraph。当前subgraph记录前一个subgraph的lastnode由于数据传输splits->input
 - split与split.input的backend不同时，插入cp_tensor(仅backend不同)
+
