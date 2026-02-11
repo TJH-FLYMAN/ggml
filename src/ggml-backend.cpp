@@ -1899,7 +1899,7 @@ static bool ggml_backend_cpu_buffer_cpy_tensor(ggml_backend_buffer_t buffer, con
 static void ggml_backend_cpu_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
     memset(buffer->context, value, buffer->size);
 }
-
+// ggml内部分配
 static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
     /* .free_buffer     = */ ggml_backend_cpu_buffer_free_buffer,
     /* .get_base        = */ ggml_backend_cpu_buffer_get_base,
@@ -1912,6 +1912,7 @@ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
     /* .reset           = */ NULL,
 };
 
+// 外部提供预分配内存 
 static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_from_ptr_i = {
     /* .free_buffer     = */ NULL, // ptr is not owned by the buffer, so it does not need to be freed
     /* .get_base        = */ ggml_backend_cpu_buffer_get_base,

@@ -416,7 +416,7 @@ bool gpt2_model_load(const std::string & fname, gpt2_model & model, gpt_vocab & 
                 // read into a temporary buffer first, then copy to device memory
                 read_buf.resize(ggml_nbytes(tensor));
                 fin.read(read_buf.data(), ggml_nbytes(tensor));
-                ggml_backend_tensor_set(tensor, read_buf.data(), 0, ggml_nbytes(tensor));
+                ggml_backend_tensor_set(tensor, read_buf.data(), 0, ggml_nbytes(tensor)); //set_tensor to backend_buffer
             }
 
             // GPT-2 models share the WTE tensor as the LM head

@@ -101,11 +101,14 @@ struct ggml_init_params params = {
 struct ggml_context* ctx = ggml_init(params); 
 ```
  
-ggml_context中weight_buffer内存布局有两种:  
-a.  gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr; ->init ggml_ctx(在gguf_init_from_file中init ggml_ctx)
-    gguf_init_from_file中。先为所有tensor_data分配整块内存，后续ggml_new_tensor，需set(no_alloc,true)时，只分配metadata内存。tensor_data根据off在首个obj中取数据         Abcbcbcbcbc  
-b.  gguf_init_params.ctx == nullptr( 单独init ggml_context) 
-    需要单独为每个weight new tensor ,tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列  abcabcabc...abc  
+ggml_context中weight_buffer内存布局有3种: 
+1. gguf中创建ggml_context,在gguf_init_from_file中init ggml_ctx（ggml_ctx由 gguf_init_from_file 内部管理）
+a.  gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr; ->init ggml_ctx
+    gguf_init_from_file中。先为所有tensor_data分配整块内存，后续ggml_new_tensor，需set(no_alloc,true)时，只分配metadata内存。tensor_data根据off在首个obj中偏移取数据         Abcbcbcbcbc  
+2. 单独init ggml_context（ggml_ctx由用户自行管理，适用于动态构建张量）  
+a.  params.no_alloc = false,权重数据在 ggml_context 的 mem_buffer（host 内存池）中分配, tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列，每个张量元数据与数据连续存储  abcabcabc...abc  
+b.  params.no_alloc = true,此时张量元数据在ggml_ctx.mem_buffer 中，但 data 为 NULL. 调用ggml_backend_alloc_ctx_tensors 为这些张量分配 ggml_backend_buffer并绑定buft  
+
 
 ## 3.ggml_cgraph
 graph需要自定义构建，流程:  
@@ -203,7 +206,7 @@ cpu_reg —>  cpu_device -> cpu_device_iface -> cpu_backend +  cpu_backend_buffe
 
 各实例关系:
 - cpu_reg 通过 iface.get_device 获取 cpu_device 实例；
-- cpu_device 包含 reg 字段指向 cpu_reg（设备归属于注册器） 
+- cpu_device 包含 reg 字段指向 cpu_reg（设备归属于后端注册） 
 - cpu_device 通过 iface.init_backend 创建 cpu_backend 实例 
 - cpu_backend 包含 device 字段指向 cpu_device（后端实例归属于设备）
 - 双向引用, 下层结构通过指针反向引用上层，便于访问父级资源
@@ -279,7 +282,7 @@ static const struct ggml_backend_device_i ggml_backend_cpu_device_i = {
     /* .init_backend         = */ ggml_backend_cpu_device_init_backend,  // 获取后端
     /* .get_buffer_type      = */ ggml_backend_cpu_device_get_buffer_type, //获取buffer_type
     /* .buffer_from_host_ptr = */ ggml_backend_cpu_device_buffer_from_host_ptr, //传参buf size初始化内存池 ggml_backend_buffer
-    /* .supports_op          = */ ggml_backend_cpu_device_supports_op,  // 检查op->op op->src是否后端支持
+    /* .supports_op          = */ ggml_backend_cpu_device_supports_op,     // 检查op->op op->src是否后端支持
     /* .supports_buft        = */ ggml_backend_cpu_device_supports_buft,   // 检查buft是否后端支持
 };
 ```
@@ -390,9 +393,8 @@ ggml_context** ggml_ctx= ggml_init(pdata);
 ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(backend, ggml_ctx);
 ```
 
-
 ## 5.ggml_gallocr
-gallocr(graph allocator)用于graoh中不同后端workspace_buf内存管理。  
+gallocr(graph allocator)用于graph中不同后端workspace_buf内存管理。  
 通过预先规划内存布局，最大化内存复用。计算节点和输入节点，采用不同的内存管理策略。其次，使用哈希表张量快速查找  
 
 
@@ -433,6 +435,12 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 - 根据tensor_hashmap.buf_id获取buft的base_ptr  
 - tensor_hashmap.offset + base_ptr = tensor.data  
 
+
+**5.4 数据流向**
+数据分为权重和中间计算结果:  
+1.权重数据  
+ggml_init_params.no_alloc = false时，权重数据 和 info信息由ggml_init_params.mem_buffer持有 ，内存为host内存, 需 set_tensor 上传后端buf
+no_alloc = true时，ggml_init_params.mem_buffer只持有info信息，权重由buft负责分配，内存为ggml_backend_buffer类型 
 
 ## 6.ggml_schedule
 后端调度，分配节点计算。后端分配器的核心是子图切分，整个graph划分成多个subgraph，每个子图分配一个后端,ggml_schedule也负责不同后端之间的数据流转

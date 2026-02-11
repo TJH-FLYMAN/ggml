@@ -387,8 +387,8 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
     GGML_ASSERT(galloc->buf_tallocs != NULL);
 
     for (int i = 0; i < n_bufs; i++) {
-        galloc->bufts[i] = bufts[i]; // bufts[i]赋值galloc->bufts[i]中
-        galloc->buffers[i] = NULL;  // buft对应buf
+        galloc->bufts[i] = bufts[i];
+        galloc->buffers[i] = NULL;
 
         // check if the same buffer type is used multiple times and reuse the same allocator
         // 相同buft复用同一个ggml_dyn_tallocr。
@@ -972,7 +972,7 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
             }
         }
     }
-    // 更新buffers 大小
+    // 扩充指针数组 buffers 
     *buffers = realloc(*buffers, sizeof(ggml_backend_buffer_t) * (*n_buffers + 1));
     (*buffers)[(*n_buffers)++] = buffer;
 
@@ -997,7 +997,7 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
         if (t->data == NULL && t->view_src == NULL) {
             this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
         }
-
+        // 单个tensor不允许超过 预设max_size
         if (this_size > max_size) {
             GGML_LOG_ERROR("%s: tensor %s is too large to fit in a %s buffer (tensor size: %zu, max buffer size: %zu)\n",
                     __func__, t->name,
