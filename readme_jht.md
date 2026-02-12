@@ -152,40 +152,14 @@ ggml_visit_parents(cgraph, res_tensor)判断逻辑
 - leafs: tensor.op == NULL && !param
 - leafs以外都为node
 
-以gpt2为例,从layer0.kv缓存开始构建计算图
-```c
-// tensor: embd  position memory_k memory_c  wte wpe
-// weight:   norm(ln_1_g,ln_1_b) atten(c_attn_attn_w,c_attn_attn_b)
-// constant: norm(eps)
-inpl = ggml_add(ctx,ggml_get_rows(ctx, wte, embd),ggml_get_rows(ctx, wpe, position));
-normRes = ggml_add(ctx,ggml_mul(ctx,ggml_norm(ctx, inpL, eps);,ln_1_g),ln_1_b);
-attenres = ggml_add(ctx,ggml_mul_mat(ctx,c_attn_attn_w,cur),c_attn_attn_b);
-Kcur = ggml_view_2d(ctx, cur, n_embd, N, cur->nb[1], 1*sizeof(float)*n_embd);
-// store key and value to memory
-k = ggml_view_1d(ctx, model.memory_k, N*n_embd, (ggml_element_size(model.memory_k)*n_embd)*(il*n_ctx + n_past));
-ggml_build_forward_expand(gf, ggml_cpy(ctx, Kcur, k));
-//添加节点顺序
-// leaf                             c_attn_attn_w  
-// leaf                             wte 
-// leaf                             embd 
-// node                             ggml_get_rows(wte) res 
-// leaf                             model/wpe 
-// leaf                             position 
-// node                             ggml_get_rows(wpe) res 
-// node                             inpl 
-// node                             normRes
-// leaf                             model/h0/ln_1/g 
-// node                             norm中mul结果tensor
-// leaf                             model/h0/ln_1/b 
-// node                             norm中add结果tensor 
-// node                             atten中mul结果tensor 
-// leaf                             c_attn_attn_b 
-// node                             attenres 
-// node                             Kcur
-// leaf                             memory_k
-// node                             K
-// node                             Kcur
-```
+以gpt2为例,从layer0.kv缓存开始构建计算图,详见docs/ggml_visit_parents.jpg
+~/ggml/examples/gpt-2/main-backend.cpp:471-535
+DFS添加顺序为
+leaf(h0/attn/c_attn/w) 
+-> leaf(wte) -> leaf(embd) -> node(embeddings) -> leaf(wpe) -> leaf(position) -> node(pos_embeddings) -> node(inpL) 
+-> node(norm_eps_res) -> leaf(h0/ln_1/g) -> node(norm_ln_1_g) -> leaf(h0/ln_1/b) -> node(norm_ln_1_b) 
+-> node(attw_mul_res) -> leaf(h0/attn/c_attn/b) -> node(attw_mul_add_res) -> node(Kcur) -> node(k) -> node(k (copy of Kcur))
+
 
 ## 4.ggml_backend
 ggml后端通过5层抽象架构设计，分别是
