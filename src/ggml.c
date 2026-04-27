@@ -1150,12 +1150,24 @@ size_t ggml_nbytes(const struct ggml_tensor * tensor) {
     size_t nbytes;
     const size_t blck_size = ggml_blck_size(tensor->type);
     if (blck_size == 1) {
+        // 非量化类型中，一个逻辑元素对应一个实际存储单元。
+        // 这里计算的是该 tensor 在当前 stride 布局下覆盖的字节范围：
+        //   最后一个元素的起始偏移 + 该元素自身大小
+        // 其中最后一个元素的起始偏移等于各维 stride 偏移之和：
+        //   sum_i ((ne[i] - 1) * nb[i])
+        // 这里的 "-1" 表示某一维有 ne[i] 个元素时，从索引 0 走到最后一个
+        // 索引，只需要走 ne[i] - 1 步，而每一步跨过 nb[i] 字节。
         nbytes = ggml_type_size(tensor->type);
         for (int i = 0; i < GGML_MAX_DIMS; ++i) {
             nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
         }
     }
     else {
+        // 量化类型中，blck_size 个逻辑元素会打包到一个实际存储块里。
+        // 因此第 0 维不能再按“单个逻辑元素大小”计算，而要按整行/整块的
+        // 存储大小计算：
+        //   ggml_row_size(type, ne[0]) == ne[0] * nb[0] / blck_size
+        // 更高维仍然通过各自的字节 stride 来定位最后一个元素/块。
         nbytes = tensor->ne[0]*tensor->nb[0]/blck_size;
         for (int i = 1; i < GGML_MAX_DIMS; ++i) {
             nbytes += (tensor->ne[i] - 1)*tensor->nb[i];
