@@ -157,21 +157,23 @@ struct ggml_map_custom3_op_params {
 typedef uint32_t ggml_bitset_t; // 32个bool值
 
 static_assert(sizeof(ggml_bitset_t) == 4, "bitset_t constants must be updated");
-#define BITSET_SHR 5 // log2(sizeof(ggml_bitset_t)*8)
+#define BITSET_SHR 5 // log2(sizeof(ggml_bitset_t)*8)  32 = 2^5
 #define BITSET_MASK (sizeof(ggml_bitset_t)*8 - 1)
-
+// i >> BITSET_SHR 第 * 个 uint32_t 里
+// i & BITSET_MASK 整数的第 * 位上
+// 1u << k 造掩码，无符号整数常量 1 左移位数 k 
 static size_t ggml_bitset_size(size_t n) {
-    return (n + BITSET_MASK) >> BITSET_SHR;
+    return (n + BITSET_MASK) >> BITSET_SHR; //  = / 2^5
 }
-
+// !! “非零”强制变成 true， 0 变成 false
 static inline bool ggml_bitset_get(const ggml_bitset_t * bitset, size_t i) {
     return !!(bitset[i >> BITSET_SHR] & (1u << (i & BITSET_MASK)));
 }
-
+// |= 按位或
 static inline void ggml_bitset_set(ggml_bitset_t * bitset, size_t i) {
     bitset[i >> BITSET_SHR] |= (1u << (i & BITSET_MASK));
 }
-
+// ~按位取反 &= 按位与 |= 按位或
 static inline void ggml_bitset_clear(ggml_bitset_t * bitset, size_t i) {
     bitset[i >> BITSET_SHR] &= ~(1u << (i & BITSET_MASK));
 }

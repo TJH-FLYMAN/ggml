@@ -231,6 +231,7 @@ static size_t ggml_dyn_tallocr_alloc(struct ggml_dyn_tallocr * alloc, size_t siz
 }
 
 // this is a very naive implementation, but for our case the number of free blocks should be very small
+// 区间还回空闲表”，并尽量合并相邻空闲块
 static void ggml_dyn_tallocr_free_tensor(struct ggml_dyn_tallocr * alloc, size_t offset, size_t size, const struct ggml_tensor * tensor) {
     size = aligned_offset(NULL, size, alloc->alignment);
 
@@ -474,65 +475,68 @@ static bool ggml_gallocr_is_allocated(ggml_gallocr_t galloc, struct ggml_tensor 
 
 static void ggml_gallocr_allocate_node(ggml_gallocr_t galloc, struct ggml_tensor * node, int buffer_id) {
     GGML_ASSERT(buffer_id >= 0);
-    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node);//获取tensor的hash信息
-
+    struct hash_node * hn = ggml_gallocr_hash_get(galloc, node); // node 对应的分配状态
+    // 只有尚未分配且不是 view 的 tensor，才需要为它规划独立存储。
     if (!ggml_gallocr_is_allocated(galloc, node) && !ggml_is_view(node)) {
-        hn->allocated = true;
+        hn->allocated = true; // 先标记为已占用，后续再决定是复用还是新分配
         assert(hn->offset == 0);
 
         // try to reuse a parent's buffer (inplace)
-        if (ggml_op_can_inplace(node->op)) {// 查询当前op是否支持dst覆盖src，如果支持，则尝试将dst覆盖src
-            for (int i = 0; i < GGML_MAX_SRC; i++) {//遍历父节点
+        if (ggml_op_can_inplace(node->op)) { // 仅对支持 inplace 的算子尝试把输出写回某个 parent 的存储
+            for (int i = 0; i < GGML_MAX_SRC; i++) { // 逐个检查候选 parent 是否满足复用条件
                 struct ggml_tensor * parent = node->src[i];
                 if (parent == NULL) {
                     continue;
                 }
 
                 // if the node's data is external, then we cannot re-use it
-                if (!ggml_gallocr_is_own(galloc, parent)) {//外部buf，不复用
+                if (!ggml_gallocr_is_own(galloc, parent)) { // 外部提供的存储不归当前 allocator 管理，不能原地覆盖
                     AT_PRINTF("not reusing parent %s for %s as %p is external\n", parent->name, node->name, parent->data);
                     continue;
                 }
 
-                // outputs cannot be reused  输出张量不复用
+                // 输出张量需要在图执行后继续保留，因此不能被复用。
                 if (parent->flags & GGML_TENSOR_FLAG_OUTPUT || (parent->view_src != NULL && parent->view_src->flags & GGML_TENSOR_FLAG_OUTPUT)) {
                     AT_PRINTF("not reusing parent %s for %s as it is an output\n", parent->name, node->name);
                     continue;
                 }
 
-                if (!ggml_are_same_layout(node, parent)) { // layout不同不复用
+                if (!ggml_are_same_layout(node, parent)) { // 布局不同会导致同一段内存被错误解释，不能复用
                     AT_PRINTF("not reusing parent %s for %s as layouts are different\n", parent->name, node->name);
                     continue;
                 }
 
-                struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent); // 父节点hash信息
-                if (p_hn->n_children == 1 && p_hn->n_views == 0) {//父节点只有一个子节点且没有视图，确保安全复用
-                    if (ggml_is_view(parent)) {//处理视图情况，视图的src是否可以安全复用
+                struct hash_node * p_hn = ggml_gallocr_hash_get(galloc, parent); // parent 的生命周期信息
+                // 只有当 parent 在当前节点执行后不再被其他节点或 view 使用时，才允许复用它的存储。
+                if (p_hn->n_children == 1 && p_hn->n_views == 0) {
+                    // 如果 parent 是 view，还要进一步确认它背后的 view_src 也可以一起“退场”。
+                    if (ggml_is_view(parent)) {
                         struct ggml_tensor * view_src = parent->view_src;
-                        struct hash_node * view_src_hn = ggml_gallocr_hash_get(galloc, view_src);//视图的src hash信息
-                        // view_src和src一对一，没有其他视图使用这个源张量，防止复用后影响其他视图的使用
-                        // view_src不能有其他子节点 无其他计算节点依赖它
-                        // view_src和src 数据指针相同
+                        struct hash_node * view_src_hn = ggml_gallocr_hash_get(galloc, view_src); // view_src 的生命周期信息
+                        // 只有满足以下条件，view parent 的存储才能安全复用：
+                        // 1. view_src 只被当前这个 view 引用，没有其他 view 别名。
+                        // 2. view_src 本体已经没有后续计算节点依赖。
+                        // 3. parent 和 view_src 指向同一段起始存储，而不是带偏移的子视图。
                         if (view_src_hn->n_views == 1 && view_src_hn->n_children == 0 && view_src->data == parent->data) {
                             AT_PRINTF("reusing view parent %s (%s) for %s\n", parent->name, view_src->name, node->name);
                             assert(view_src_hn->offset == p_hn->offset);
                             hn->buffer_id = p_hn->buffer_id;
                             hn->offset = p_hn->offset;
-                            p_hn->allocated = false; // avoid freeing the parent
+                            p_hn->allocated = false; // 存储所有权转给 node，避免后续再释放 parent
                             view_src_hn->allocated = false;
                             return;
                         }
-                    } else {// 父节点不是视图，直接复用buf,设置当前节点使用相同的缓冲区ID和偏移量标记父节点为未分配状态，避免被释放
+                    } else { // 普通 parent 没有额外别名问题，可以直接把存储“过户”给 node
                         AT_PRINTF("reusing parent %s for %s\n", parent->name, node->name);
                         hn->buffer_id = p_hn->buffer_id;
                         hn->offset = p_hn->offset;
-                        p_hn->allocated = false; // avoid freeing the parent
+                        p_hn->allocated = false; // 存储所有权转给 node，避免后续再释放 parent
                         return;
                     }
                 }
             }
         }
-        // allocate tensor from the buffer  没法复用，直接分配buf
+        // 走到这里说明无法安全复用任何 parent，只能从目标 buffer 中切一块新空间。
         struct ggml_dyn_tallocr * alloc = galloc->buf_tallocs[buffer_id];
         ggml_backend_buffer_type_t buft = galloc->bufts[buffer_id];
         size_t size = ggml_backend_buft_get_alloc_size(buft, node);
@@ -573,11 +577,10 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
     // these may be tensors that the application is not using in the graph, but may still want to allocate for other purposes
     for (int i = 0; i < graph->n_leafs; i++) {
         struct ggml_tensor * leaf = graph->leafs[i];
-        printf(" leaf name %s\n",leaf->name);
         ggml_gallocr_allocate_node(galloc, leaf, get_node_buffer_id(leaf_buffer_ids, i));
     }
 
-    // count number of children and views
+    // count number of children and views 统计依赖关系（children and views）
     // allocate other graph inputs and leafs first to avoid overwriting them
     for (int i = 0; i < graph->n_nodes; i++) {
         struct ggml_tensor * node = graph->nodes[i];
@@ -590,11 +593,11 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
             struct ggml_tensor * view_src = node->view_src;
             ggml_gallocr_hash_get(galloc, view_src)->n_views += 1; // 更新源视图 count
         }
-
+        // 分配输入
         if (node->flags & GGML_TENSOR_FLAG_INPUT) {
             ggml_gallocr_allocate_node(galloc, graph->nodes[i], get_node_buffer_id(node_buffer_ids, i));
         }
-
+        // 统计当前tensor被多少节点依赖
         for (int j = 0; j < GGML_MAX_SRC; j++) {
             struct ggml_tensor * src = node->src[j];
             if (src == NULL) {
@@ -616,6 +619,7 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
         int buffer_id = get_node_buffer_id(node_buffer_ids, i);
 
         // allocate parents (only leafs need to be allocated at this point)
+        // 确保每个node父节点已经分配
         for (int j = 0; j < GGML_MAX_SRC; j++) {
             struct ggml_tensor * parent = node->src[j];
             if (parent == NULL) {
@@ -625,6 +629,7 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
         }
 
         // allocate node
+        //  给当前 node 分配内存(决定是否复用 或 新分配)
         ggml_gallocr_allocate_node(galloc, node, buffer_id);
 
         AT_PRINTF("exec: %s (%s) <= ", ggml_op_desc(node), node->name);
@@ -641,6 +646,7 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
         AT_PRINTF("\n");
 
         // update parents
+        // 当前 node 使用完 parent 后，更新 parent 的引用计数
         for (int j = 0; j < GGML_MAX_SRC; j++) {
             struct ggml_tensor * parent = node->src[j];
             if (parent == NULL) {
@@ -651,7 +657,7 @@ static void ggml_gallocr_alloc_graph_impl(ggml_gallocr_t galloc, struct ggml_cgr
 
             AT_PRINTF("parent %s: %d children, %d views, allocated: %d\n",
                 parent->name, p_hn->n_children, p_hn->n_views, p_hn->allocated);
-
+            // tensor不再使用，释放回内存池
             if (p_hn->n_children == 0 && p_hn->n_views == 0) {
                 if (ggml_is_view(parent)) {
                     struct ggml_tensor * view_src = parent->view_src;
@@ -827,7 +833,7 @@ static bool ggml_gallocr_node_needs_realloc(ggml_gallocr_t galloc, struct ggml_t
     }
     return talloc->size_max >= node_size;
 }
-
+// n_nodes/n_leafs 变化，或者某 tensor 当前大小超过了 reserve 时记录的 size_max
 static bool ggml_gallocr_needs_realloc(ggml_gallocr_t galloc, struct ggml_cgraph * graph) {
     if (galloc->n_nodes != graph->n_nodes) {
 #ifndef NDEBUG
