@@ -645,3 +645,7 @@ else
    - 哪些中间 tensor 可以复用同一段空间  
   
 `sched` 解决“谁算、算哪一段、输入从哪来”；`gallocr` 解决“这段图里的 tensor 具体放到哪块内存”。  
+
+
+可参考：
+https://blog.rickyyel.org/blog/ggml-source-code-brief
