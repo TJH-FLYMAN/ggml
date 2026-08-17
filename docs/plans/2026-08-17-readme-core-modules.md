@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Correct `readme_jht.md` against the current source and extend it into an accurate Chinese guide to GGML core modules and the CPU backend.
+**Goal:** Correct `readme_jht.md` against the current source and extend it into an accurate Chinese guide to GGML core modules used by offline CPU inference.
 
 **Architecture:** Treat the public headers and the source files compiled into `ggml-base`, `ggml`, and `ggml-cpu` as the source of truth. Revise one module at a time using an explicit audit → user approval → patch → targeted verification checkpoint; reorder and renumber the document only after every module's content has been approved.
 
@@ -19,7 +19,7 @@
 
 **Step 1: Prepare the audit**
 
-Compare the current overview with the actual `ggml-base`, `ggml`, and `ggml-cpu` target sources. Prepare a table that separates data representation, graph construction, allocation, execution, persistence, quantization, and training.
+Compare the current overview with the actual `ggml-base`, `ggml`, and `ggml-cpu` target sources. Prepare a table that separates data representation, graph construction, allocation, execution, persistence, and quantization, while explicitly excluding training-related modules.
 
 **Step 2: Request approval**
 
@@ -79,7 +79,7 @@ Rewrite only the context section.
 
 Check field/function names against the two reference source files and run `git diff --check`.
 
-### Task 4: Computation graph, backward graph, and graph utilities
+### Task 4: Forward computation graph and graph utilities
 
 **Files:**
 - Modify: `readme_jht.md`
@@ -88,11 +88,11 @@ Check field/function names against the two reference source files and run `git d
 
 **Step 1: Prepare the audit**
 
-Trace graph allocation, DFS visitation, node/leaf classification, forward expansion, backward expansion, gradient maps, graph views, import/export, DOT output, and reset/clear semantics.
+Trace graph allocation, DFS visitation, node/leaf classification, forward expansion, graph views, import/export, DOT output, and clear semantics. Do not document backward expansion, gradient maps, loss handling, or training-only reset behavior.
 
 **Step 2: Request approval**
 
-Show corrections to the existing graph chapter and proposed additions for backward graphs and graph utilities.
+Show corrections to the existing graph chapter and proposed additions for inference-oriented graph utilities.
 
 **Step 3: Apply approved graph content**
 
@@ -224,38 +224,14 @@ Rewrite only the GGUF section.
 
 Check public API symbols and compare format claims with both `include/gguf.h` and `docs/gguf.md`; run `git diff --check`.
 
-### Task 10: Optimizer, dataset, and training flow
-
-**Files:**
-- Modify: `readme_jht.md`
-- Reference: `include/ggml-opt.h`
-- Reference: `src/ggml-opt.cpp`
-- Reference: `tests/test-opt.cpp`
-
-**Step 1: Prepare the audit**
-
-Trace dataset storage/sharding, loss selection, forward/backward/optimizer graph construction, gradient accumulation, AdamW step, result aggregation, epoch, and fit helpers.
-
-**Step 2: Request approval**
-
-Present the proposed training-layer section and distinguish core graph autograd from the higher-level `ggml-opt` convenience module.
-
-**Step 3: Apply approved optimizer content**
-
-Insert the new section.
-
-**Step 4: Verify**
-
-Run `ctest --test-dir build -R '^test-opt$' --output-on-failure`, check symbols, and run `git diff --check`.
-
-### Task 11: Integration, ordering, and end-to-end CPU lifecycle
+### Task 10: Integration, ordering, and end-to-end CPU inference lifecycle
 
 **Files:**
 - Modify: `readme_jht.md`
 
 **Step 1: Prepare the integration proposal**
 
-Show the final table of contents, proposed pure-CPU lifecycle, ownership/free order, and any content that will be moved or deduplicated.
+Show the final table of contents, proposed pure-CPU inference lifecycle, ownership/free order, and any content that will be moved or deduplicated. Confirm that no training, gradient, backward-pass, dataset, or optimizer material remains.
 
 **Step 2: Request approval**
 
@@ -272,4 +248,3 @@ Run checks for balanced code fences, heading hierarchy, duplicate headings, trai
 **Step 5: Run full verification**
 
 Run `cmake --build build -j2`, then `ctest --test-dir build --output-on-failure`, followed by `git diff --check` and a final `git status --short` review.
-
