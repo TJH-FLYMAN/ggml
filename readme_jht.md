@@ -1,14 +1,32 @@
 # ggml
 
-## ggml overview
-gguf : GGML 模型文件格式，解析结果保存在 `gguf_context`  
-ggml_context: ggml核心内存池，管理 `ggml_object`、tensor metadata，以及部分场景下的 tensor data  
-ggml_cgraph: 计算图的表示，定义图中节点/叶子以及遍历顺序  
-ggml_backend: graph在不同硬件上的执行抽象，包含 CPU（默认）、CUDA、Metal、Vulkan、RPC 等后端  
-ggml_backend_buffer_type: 后端 buffer 描述符，对应内存分配策略/内存类型  
-ggml_backend_buffer: buffer_type 实际分配的 buffer。一个 `ggml_backend_buffer` 可以存储多个张量数据  
-ggml_gallocr: 计算图张量分配器，用于不同后端上的图内存管理  
-ggml_backend_sched: 多后端调度器  
+## 总览与范围
+
+GGML 是一个以 tensor 和计算图为核心的机器学习张量库。本文以当前仓库源码为准，介绍离线推理涉及的核心模块；具体 backend 实现只展开 CPU，不介绍训练、梯度和反向传播。
+
+| 模块 | 核心对象/接口 | 职责 |
+| --- | --- | --- |
+| tensor 与算子 | `ggml_tensor`、`ggml_type`、`ggml_op` | 描述数据类型、shape、stride、view、算子及依赖关系 |
+| context | `ggml_context`、`ggml_object` | 管理 tensor、graph 等对象的元数据内存，以及可选的内联 tensor data |
+| computation graph | `ggml_cgraph` | 从输出 tensor 回溯依赖并建立前向计算图 |
+| backend abstraction | backend、device、buffer type、buffer | 抽象设备、内存和计算接口；具体实现只展开 CPU backend |
+| allocation | `ggml_tallocr`、`ggml_gallocr` | 分配 tensor，或根据图中生命周期规划和复用执行期内存 |
+| scheduler | `ggml_backend_sched` | 选择节点 backend、切分子图、创建跨 backend copy、调用 gallocr 分配内存并驱动各 split 执行 |
+| CPU execution | CPU backend、compute plan、threadpool | 将 graph 中的 op 分派给 CPU kernel 并行执行 |
+| quantization | type traits、`ggml_quantize_*` | 定义量化块格式、数据转换和 CPU 量化计算能力 |
+| GGUF | `gguf_context` | 读取、检查、修改和写出模型元数据及 tensor 数据 |
+
+典型离线推理路径：
+
+GGUF 加载模型
+→ tensor/算子定义依赖
+→ 构建前向 `ggml_cgraph`
+→ allocator 绑定 backend buffer
+→ scheduler 选择 backend、切图并处理必要的数据复制
+→ 对应 backend 执行 split
+→ 读取输出 tensor
+
+本文完整介绍 scheduler 的通用多 backend 调度机制，但具体 backend 的内部实现只介绍 CPU。
 
 ## 1. GGUF
 gguf模型解析后，元数据与 tensor info 保存在 `gguf_context`  
