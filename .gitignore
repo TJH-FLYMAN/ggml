@@ -1,2 +1,3 @@
 build
+.worktrees/
 models/gpt-2-117M/ggml-model-gpt-2-117M.bin
