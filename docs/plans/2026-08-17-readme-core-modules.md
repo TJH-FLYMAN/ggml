@@ -161,11 +161,11 @@ Check all allocator names against the public header and implementation and run `
 
 **Step 1: Prepare the audit**
 
-Verify scheduler construction constraints, backend assignment passes, split/copy creation, gallocr integration, reserve/allocation behavior, pipeline copies, callbacks, reset, and single-CPU degeneration.
+Verify scheduler construction constraints, backend assignment passes, split/copy creation, gallocr integration, reserve/allocation behavior, pipeline copies, callbacks, reset, and the behavior when only CPU is configured.
 
 **Step 2: Request approval**
 
-Present corrections to the current scheduler chapter and clearly distinguish generic scheduler mechanics from the only concrete backend described, CPU.
+Present corrections to the current scheduler chapter and explain its generic multi-backend mechanics completely. Clearly distinguish those mechanics from concrete backend implementations, of which only CPU is described.
 
 **Step 3: Apply approved scheduler content**
 

@@ -30,7 +30,7 @@
 6. backend 抽象、buffer 与 CPU backend。
 7. CPU 计算计划、线程池和 graph compute。
 8. tallocr、gallocr 与 context tensor 分配。
-9. scheduler；保留通用切图机制，只以 CPU 说明退化行为。
+9. scheduler；完整说明 backend 选择、切图、跨 backend copy、gallocr 集成和 pipeline，不展开非 CPU backend 的具体实现。
 10. 量化和 type traits。
 11. GGUF 读取、修改与写出。
 12. 纯 CPU 推理端到端生命周期和资源释放顺序。
