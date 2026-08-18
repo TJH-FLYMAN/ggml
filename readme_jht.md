@@ -1141,6 +1141,284 @@ ggml_backend_free(cpu_backend);
 ```
 
 调试 backend 分配和 split 时，可在创建 scheduler 前设置环境变量 `GGML_SCHED_DEBUG`。非零值打印 split 信息，较高值还会输出逐 node 的 backend 分配及原因。
+
+## 量化、block 布局与 CPU type traits
+
+在 GGML 中，量化类型不是“每个元素占固定字节数”的普通标量类型，而是一种 block 编码格式：若干逻辑元素共享 scale、min、查找表索引等元数据，并被压缩到一个存储 block 中。
+
+离线推理中的量化可以分成两个阶段：
+
+1. 模型转换阶段：把 F32 权重转换成指定量化格式，通常写入 GGUF。
+2. 模型执行阶段：CPU kernel 直接读取量化权重，并根据对应的 CPU type traits 选择转换函数和 dot kernel。
+
+### block 大小与实际存储量
+
+通用 type traits 中的两个大小必须区分：
+
+- `ggml_blck_size(type)`：一个存储 block 表示多少个逻辑元素。
+- `ggml_type_size(type)`：一个完整存储 block 占多少字节。
+
+因此，一行数据的大小不是简单的“元素数 × `ggml_type_size()`”，而是：
+
+```text
+row_bytes = ggml_type_size(type) * ne0 / ggml_blck_size(type)
+```
+
+对应接口是：
+
+```c
+size_t row_bytes = ggml_row_size(type, ne0);
+```
+
+`ggml_row_size()` 要求 `ne0` 能被该类型的 block size 整除，否则会触发断言。
+
+一个量化格式包含 scale、min 等额外信息，所以格式名称中的位数不等于最终平均存储位数。例如：
+
+- `Q4_0` 的一个 block 表示 32 个值，由一个 F16 scale 和 16 字节量化值组成，共 18 字节，平均为 `18*8/32 = 4.5` bit/value。
+- `Q4_1` 在量化值之外还保存 scale 和 min，共 20 字节，平均为 `20*8/32 = 5` bit/value。
+
+可以用下面的公式计算某个格式包含 block 元数据之后的平均存储位数：
+
+```text
+effective_bits_per_value =
+    8 * ggml_type_size(type) / ggml_blck_size(type)
+```
+
+### 主要量化格式族
+
+具体 block 结构定义在 `src/ggml-common.h`，量化和反量化实现在 `src/ggml-quants.c`。
+
+| 格式族 | 典型类型 | block 特点 |
+| --- | --- | --- |
+| 经典 Q 格式 | `Q4_0`、`Q4_1`、`Q5_0`、`Q5_1`、`Q8_0`、`Q8_1` | 通常每个 block 表示 32 个值；不同格式保存的 scale、min 和高位数据不同 |
+| K-quant | `Q2_K`、`Q3_K`、`Q4_K`、`Q5_K`、`Q6_K` | 使用 256 个值的 super-block，并在其中保存分组 scale、min 或高位数据 |
+| IQ | `IQ1_*`、`IQ2_*`、`IQ3_*`、`IQ4_*` | 多数使用 256 个值的 super-block，并使用非线性 codebook、grid 或索引结构；`IQ4_NL` 的 block size 为 32 |
+| TQ | `TQ1_0`、`TQ2_0` | 以 256 个值为一个 block 的 ternary 量化格式 |
+| CPU 中间格式 | `Q8_1`、`Q8_K` | 主要作为某些 dot kernel 的 activation companion；其中 `Q8_K` 的源码注释明确说明其用于中间量化和 dot product，而不是普通持久化权重格式 |
+
+这些格式不能只按照名称中的位数解释。每个格式都有独立的 block 字段布局、量化范围和 CPU kernel，不能把一种格式的裸数据按另一种格式读取。
+
+旧的 `Q4_0_4_4`、`Q4_0_4_8`、`Q4_0_8_8` 以及对应的 `IQ4_NL` interleave 类型已经从通用存储类型中移除。当前源码为这些枚举槽位设置了零 block size，并提示使用普通 `Q4_0` 或 `IQ4_NL` 配合运行时 repacking；它们不能再作为有效的持久化 tensor 类型使用。
+
+### 通用 `ggml_type_traits`
+
+`ggml_get_type_traits(type)` 返回该存储类型的通用描述：
+
+```c
+struct ggml_type_traits {
+    const char      * type_name;
+    int64_t           blck_size;
+    int64_t           blck_size_interleave;
+    size_t            type_size;
+    bool              is_quantized;
+    ggml_to_float_t   to_float;
+    ggml_from_float_t from_float_ref;
+};
+```
+
+各字段的职责为：
+
+| 字段 | 含义 |
+| --- | --- |
+| `type_name` | 类型名称 |
+| `blck_size` | 每个存储 block 表示的逻辑元素数 |
+| `blck_size_interleave` | block 内交错信息；当前通用类型表多数为 0，CPU 的特定布局优化主要通过运行时 repacking 实现 |
+| `type_size` | 一个完整 block 的字节数 |
+| `is_quantized` | 是否为量化类型 |
+| `to_float` | 把当前格式转换为 F32 的参考入口 |
+| `from_float_ref` | 从 F32 转换为当前格式的参考入口 |
+
+转换函数指针不保证非空。例如，`Q8_K` 没有通用 `to_float` 和 `from_float_ref`，部分 IQ 类型也没有 `from_float_ref`。调用方必须先检查函数指针，不能假设所有 `ggml_type` 都支持双向通用转换。
+
+`src/ggml-quants.h` 中的 `quantize_row_*`、`quantize_row_*_ref` 和 `dequantize_row_*` 是量化实现及 CPU backend 使用的行级函数。虽然其中部分函数带有导出标记，但应用层进行离线模型转换时，更合适的统一入口是 `ggml_quantize_chunk()`。
+
+### 使用 `ggml_quantize_chunk()` 离线转换
+
+`ggml_quantize_chunk()` 把连续的 F32 源数据转换为目标存储格式：
+
+```c
+size_t ggml_quantize_chunk(
+        enum ggml_type   type,
+           const float * src,
+                  void * dst,
+               int64_t   start,
+               int64_t   nrows,
+               int64_t   n_per_row,
+           const float * imatrix);
+```
+
+典型用法如下：
+
+```c
+enum ggml_type type = GGML_TYPE_Q4_0;
+
+int64_t nrows       = ...;
+int64_t n_per_row   = ...;
+
+size_t row_size = ggml_row_size(type, n_per_row);
+size_t dst_size = nrows * row_size;
+
+void * dst = ...; // 至少提供 dst_size 字节
+
+size_t written = ggml_quantize_chunk(
+    type,
+    src_f32,
+    dst,
+    0,
+    nrows,
+    n_per_row,
+    NULL);
+
+GGML_ASSERT(written == dst_size);
+```
+
+调用时需要满足以下条件：
+
+1. `src` 按 F32 提供，逻辑上由 `nrows` 行组成，每行有 `n_per_row` 个值。
+2. `n_per_row` 必须能被目标类型的 block size 整除。
+3. `start` 是源 F32 数组中的元素偏移，而不是字节偏移。
+4. `start` 必须同时满足 `start % n_per_row == 0` 和 `start % blck_size == 0`，即本次转换从所声明的行边界开始。
+5. `dst` 必须已经为目标格式分配足够空间；函数不会替调用者分配 tensor 数据。
+6. 返回值是本次写入的目标格式字节数，源码会检查它等于 `nrows * ggml_row_size(type, n_per_row)`。
+
+目标写入位置按照下面的方式计算：
+
+```text
+start_row = start / n_per_row
+dst_offset = start_row * ggml_row_size(type, n_per_row)
+```
+
+因此，可以用多个不重叠 chunk 填充同一个目标 buffer，但每个 chunk 都必须遵守它所声明的行宽和行边界。
+
+当前 `ggml_quantize_chunk()` 支持：
+
+- `Q4_0`、`Q4_1`、`Q5_0`、`Q5_1`、`Q8_0`；
+- `Q2_K`、`Q3_K`、`Q4_K`、`Q5_K`、`Q6_K`；
+- `IQ2_XXS`、`IQ2_XS`、`IQ2_S`、`IQ3_XXS`、`IQ3_S`、`IQ1_S`、`IQ1_M`、`IQ4_NL`、`IQ4_XS`；
+- `TQ1_0`、`TQ2_0`；
+- F32 到 `F16`、`BF16` 和 `F32` 的转换或复制。
+
+`Q8_1`、`Q8_K` 以及已经移除的 interleave 类型不是该接口支持的目标类型；传入未支持的类型会进入断言失败路径。
+
+### importance matrix
+
+`imatrix` 是离线量化时可选的外部 importance weights，用于让部分量化算法在误差计算中提高某些位置的重要程度。本文只讨论如何把它传给离线转换接口，不讨论这些权重如何生成。
+
+当前实现把 `imatrix` 解释为一行中各位置的 importance weights，并在本次调用处理的各行之间重复使用；它不会根据 `start` 自动移动 `imatrix` 指针。
+
+可以用下面的接口判断目标格式是否强制要求 importance matrix：
+
+```c
+bool required = ggml_quantize_requires_imatrix(type);
+```
+
+当前源码只对以下类型返回 `true`：
+
+- `GGML_TYPE_IQ2_XXS`
+- `GGML_TYPE_IQ2_XS`
+- `GGML_TYPE_IQ1_S`
+
+`IQ1_M` 在该判断中的代码目前被注释掉，因此当前实现不会把它判定为强制需要 `imatrix`。对强制需要的类型传入 `NULL` 会触发断言。对其他部分格式，`imatrix` 可以为空，也可以作为可选权重参与量化；还有一些格式会直接忽略该参数。
+
+### 量化查找表的生命周期
+
+部分 IQ 格式需要初始化运行时查找表。接口为：
+
+```c
+ggml_quantize_init(type);
+ggml_quantize_free();
+```
+
+`ggml_quantize_chunk()` 会自动调用 `ggml_quantize_init(type)`，所以普通调用者不需要在每个 chunk 前手动初始化。重复初始化同一种类型不会重复创建已经存在的表。
+
+头文件把 `ggml_quantize_init()` 和 `ggml_quantize_free()` 声明为线程安全，源码也使用全局临界区串行化初始化和释放。但释放操作不应与正在使用这些查找表的量化操作并发进行；通常应在全部离线转换完成之后统一调用：
+
+```c
+ggml_quantize_free();
+```
+
+当前源码还有一处实现与头文件注释不完全一致：
+
+- `ggml_quantize_init()` 可以为 `IQ2_S` 初始化独立的 IQ2 表，也可以为 `IQ3_S` 初始化 grid size 为 512 的 IQ3 表。
+- `ggml_quantize_free()` 当前释放了 `IQ2_XXS`、`IQ2_XS`、`IQ1_S/IQ1_M` 共享表和 grid size 为 256 的 IQ3 表，但没有释放 `IQ2_S` 的独立表和 `IQ3_S` 使用的 512 grid。
+
+因此，当前版本的 `ggml_quantize_free()` 没有完全兑现头文件中“释放 `ggml_quantize_init()` 分配的所有内存”的注释。这是当前源码的实现限制；长生命周期进程如果反复初始化和释放这些格式，需要特别注意。
+
+### CPU `ggml_type_traits_cpu`
+
+通用 `ggml_type_traits` 描述存储格式和参考转换，CPU backend 还维护一张计算能力表：
+
+```c
+struct ggml_type_traits_cpu {
+    ggml_from_float_t from_float;
+    ggml_vec_dot_t    vec_dot;
+    enum ggml_type    vec_dot_type;
+    int64_t           nrows;
+};
+```
+
+可以通过下面的接口取得：
+
+```c
+const struct ggml_type_traits_cpu *
+ggml_get_type_traits_cpu(enum ggml_type type);
+```
+
+该结构在 `ggml-cpu.h` 中被归类为供测试和 benchmark 使用的 internal types/functions。理解它有助于阅读 CPU kernel，但应用层不应把它当成稳定的模型转换接口。
+
+字段含义为：
+
+| 字段 | 含义 |
+| --- | --- |
+| `from_float` | CPU 优化的 F32 到该类型的转换函数；不保证存在 |
+| `vec_dot` | 该类型作为左侧数据时使用的 CPU dot kernel |
+| `vec_dot_type` | dot kernel 要求右侧输入转换成的 companion 类型 |
+| `nrows` | kernel 一次协同处理的行数，可能随类型和编译目标变化 |
+
+常见的权重类型与 activation companion 关系如下：
+
+| 权重类型 | `vec_dot_type` |
+| --- | --- |
+| `Q4_0`、`Q5_0`、`Q8_0`、`IQ4_NL` | `Q8_0` |
+| `Q4_1`、`Q5_1` | `Q8_1` |
+| `Q2_K`～`Q6_K`、大多数 IQ 类型、`IQ4_XS`、`TQ1_0`、`TQ2_0` | `Q8_K` |
+
+在常见的 CPU 矩阵乘路径中，CPU backend 会按照量化权重类型取得 `vec_dot` 和 `vec_dot_type`。如果 activation 还不是 kernel 要求的 companion 类型，执行计划会使用 CPU work buffer 中的临时空间，通过 companion 类型的 `from_float` 将 activation 转换后再调用 dot kernel。
+
+因此，量化推理通常不是：
+
+```text
+量化权重 -> 全部反量化为 F32 -> F32 矩阵乘
+```
+
+而更接近：
+
+```text
+量化权重 block
+        +
+activation -> 临时 Q8 companion
+        ↓
+对应的 quantized-weight × Q8 dot kernel
+```
+
+这使 CPU kernel 可以直接消费量化权重，避免在每次推理前把全部权重展开成 F32。具体是否走该路径仍取决于算子、数据布局、CPU 特性和对应 kernel 是否可用，不能把它推广为所有 CPU 算子的统一行为。
+
+部分 IQ 类型的 CPU `from_float` 为空，因为其量化过程需要额外初始化或 importance matrix。离线生成模型权重时，应使用 `ggml_quantize_chunk()`，不能因为某种类型存在 `vec_dot` 就假设 CPU traits 同时提供该类型的直接量化函数。
+
+### 量化数据与 GGUF 的边界
+
+GGUF tensor info 保存 tensor 的 `ggml_type`、shape 和数据偏移，tensor data 区保存对应格式的原始 block 字节。GGUF loader 不会因为 tensor 是量化类型就自动把它展开为 F32。
+
+因此，加载量化权重时需要保持以下一致性：
+
+- GGUF 中记录的 tensor type 必须与实际 block 字节格式一致。
+- tensor 第 0 维必须满足该类型的 block size 约束。
+- 行大小应通过 `ggml_row_size()` 计算。
+- tensor 总字节数、GGUF offset 和 backend buffer 中的目标范围必须匹配。
+- 不能把量化数据当成按逻辑元素连续排列的标量数组访问。
+
+量化格式负责“数据如何编码”，CPU type traits 和 kernel 负责“这些编码如何参与计算”，GGUF 则负责“类型信息和原始 block 如何持久化”。这三个层次需要保持一致。
+
 ## 如何判断是否掌握 GGML
 
 “能够运行示例”不等于掌握框架。示例可能隐藏了 graph 构建、buffer 所有权、内存规划和 scheduler 等关键细节。更可靠的判断标准是：能否独立解释执行链路、预测代码行为、定位故障并完成有边界的修改。
