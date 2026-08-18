@@ -314,55 +314,111 @@ GGML_PAD(data_size, GGML_MEM_ALIGN)
 - `ggml_free(ctx)`：释放 context 本身；只有 `mem_buffer_owned == true` 时才释放 `mem_buffer`。
 - context 不拥有通过独立 backend allocator 创建的 backend buffer。backend buffer 需要通过对应的 buffer API 单独释放。
 
-## 3.ggml_cgraph
-graph 需要自定义构建，流程：  
-- 分配 `ggml_cgraph` 内存
-- 定义计算图，使用算子函数连接weight参数并创建中间计算节点
-- 使用 `ggml_build_forward_expand()` 构建计算图
-- 默认最大节点数由 `GGML_DEFAULT_GRAPH_SIZE=2048` 决定  
+## 前向计算图 `ggml_cgraph`
 
-node 为计算节点，数组中的元素是指向 tensor 的指针  
-leaf 一般是常量、输入、权重等不执行 op 的张量  
-`ggml_cgraph_eval_order` 代表递归时 `src[]` 数组遍历正序或逆序，影响拓扑遍历顺序  
+算子函数先把依赖关系记录在 tensor 的 `op/src[]` 中，`ggml_cgraph` 再从一个或多个输出 tensor 回溯这些依赖，形成 backend 可以按拓扑顺序执行的前向图。
 
+### Graph 保存的状态
 
-**3.1 内存分配**  
-内存分配分为图张量内存分配器ggml_galloc_t和图内存申请ggml_new_graph  
-- `ggml_new_graph` / `ggml_new_graph_custom`：为计算图对象本身分配内存  
-- `ggml_gallocr`：为图中的张量分配实际后端内存  
+推理 graph 的核心状态包括：
 
-`ggml_new_graph(ggml_ctx)`  
-- 根据 size 计算 graph 所需内存大小，包含 `nodes / leafs / hash table` 等  
-- 在 `ggml_context` 中新建 graph object  
-- 计算 graph 内各数组在 object 数据区中的起始地址  
-- 返回 `ggml_cgraph *`  
+- `size`：`nodes[]` 和 `leafs[]` 各自可容纳的最大 tensor 数。
+- `n_nodes`、`nodes[]`：需要 backend 执行的计算 tensor。
+- `n_leafs`、`leafs[]`：没有生成算子的输入、权重或常量 tensor。
+- `visited_hash_set`：记录已经访问的 tensor，避免共享依赖重复加入。
+- `order`：内部 DFS 遍历 `src[]` 的顺序，默认从低索引到高索引。
 
+graph 只保存 tensor 指针，不拥有 tensor metadata 或 tensor data。graph、tensor metadata 和它们所在的 context 必须在构图和执行期间保持有效。
 
-**3.2 定义计算节点**  
-例如定义 `y = d * (a * w + b)`，初始化中间节点的 `src` 和 `op_type`  
+### Graph object 的内存
+
+离线推理通常创建：
+
 ```c
-struct ggml_tensor * aw         = ggml_mul(ggml_ctx, a, w);
-struct ggml_tensor * y          = ggml_add(ggml_ctx, aw, b);
-struct ggml_tensor * res_tensor = ggml_mul(ggml_ctx, y, d);
+struct ggml_cgraph * graph =
+    ggml_new_graph_custom(ctx, graph_size, false);
 ```
 
-**3.3 构建计算图**  
-`ggml_visit_parents` 从结果张量为根节点开始，递归访问每个节点依赖的 `src[:]`，再把遍历到的张量分别放入 `ggml_cgraph.nodes` 和 `ggml_cgraph.leafs`  
+`ggml_new_graph(ctx)` 使用 `GGML_DEFAULT_GRAPH_SIZE`，当前值为 2048。推理 graph 的 object payload 包含：
 
-`ggml_visit_parents(cgraph, res_tensor)` 判断逻辑  
-- 从 `res_tensor` 开始，遍历所有依赖张量；`cgraph.order` 决定 `tensor.src[:]` 遍历正序或逆序,默认正序  
-- `hash_set` 记录已访问张量，避免重复遍历  
-- leafs: `tensor.op == GGML_OP_NONE` 且该 tensor 不是 param tensor
-- leafs 以外都为 node  
+```text
+[ggml_cgraph]
+[nodes[size]]
+[leafs[size]]
+[visited hash keys]
+[visited bitset]
+```
 
-以 gpt-2 为例，从结果张量回溯构建图，详见 `docs/ggml_visit_parents.jpg`  
-`examples/gpt-2/main-backend.cpp:471-535`
-DFS添加顺序为
-leaf(h0/attn/c_attn/w) 
--> leaf(wte) -> leaf(embd) -> node(embeddings) -> leaf(wpe) -> leaf(position) -> node(pos_embeddings) -> node(inpL) 
--> node(norm_eps_res) -> leaf(h0/ln_1/g) -> node(norm_ln_1_g) -> leaf(h0/ln_1/b) -> node(norm_ln_1_b) 
--> node(attw_mul_res) -> leaf(h0/attn/c_attn/b) -> node(attw_mul_add_res) -> node(Kcur) -> node(k) -> node(k (copy of Kcur))
+visited hash 的容量根据 `size * 2` 计算，因为它需要同时容纳 nodes 和 leafs。`ggml_graph_overhead()` 返回默认 graph 的 context 开销，`ggml_graph_overhead_custom(graph_size, false)` 返回自定义推理 graph 的开销。
 
+`ggml_new_graph*()` 只分配 graph object 本身；图中 tensor data 的 backend 内存由后面的 allocator 负责。
+
+### 从算子关系构建 graph
+
+例如先定义：
+
+```c
+struct ggml_tensor * aw  = ggml_mul_mat(ctx, w, a);
+struct ggml_tensor * sum = ggml_add(ctx, aw, b);
+struct ggml_tensor * out = ggml_mul(ctx, sum, d);
+```
+
+这时 `aw/sum/out` 已记录 `op/src[]`，但 graph 的 `nodes[]/leafs[]` 还是空的。调用：
+
+```c
+ggml_build_forward_expand(graph, out);
+```
+
+内部的 `ggml_visit_parents()` 对 tensor 做 DFS：
+
+1. 首次遇到 tensor 时插入 `visited_hash_set`；已访问的 tensor 直接返回。
+2. 按 `order` 递归访问当前 tensor 的 `src[]`。
+3. 在本文的推理图中，`op == GGML_OP_NONE` 的 tensor 加入 `leafs[]`。
+4. 其余 tensor 加入 `nodes[]`。
+
+tensor 在所有依赖访问完成后才加入数组，因此 `nodes[]` 是后序得到的拓扑顺序：依赖位于使用者之前，新增的计算根通常是最后一个 node。
+
+上述小图可表示为：
+
+```text
+w ─┐
+   ├─ mul_mat → aw ─┐
+a ─┘                ├─ add → sum ─┐
+b ──────────────────┘             ├─ mul → out
+d ────────────────────────────────┘
+
+leafs: w, a, b, d
+nodes: aw, sum, out
+```
+
+### `expand` 的增量语义
+
+`ggml_build_forward_expand()` 不会先清空 graph，可以把多个根节点依次加入同一张图：
+
+```c
+ggml_build_forward_expand(graph, copy_k);
+ggml_build_forward_expand(graph, copy_v);
+ggml_build_forward_expand(graph, output);
+```
+
+共享依赖因为 visited hash 只会加入一次。这适合在主输出之外加入需要执行的 copy/write 节点。若要从空 graph 重新构建，应先调用 `ggml_graph_clear()`。
+
+### Graph view、复制与查询
+
+- `ggml_graph_view(graph, i0, i1)`：内部工具，浅引用 `nodes[i0:i1)`；结果不带 leaf 和 visited hash。scheduler 用它表示一个 split 的连续 node 区间。
+- `ggml_graph_cpy(src, dst)`：复制 node/leaf 指针、遍历顺序及 visited 集合，不复制 tensor metadata 或 data。
+- `ggml_graph_dup(ctx, graph)`：在另一个 context 创建 graph object，再调用 `ggml_graph_cpy()` 做相对 tensor 的浅复制。
+- `ggml_graph_node()`、`ggml_graph_nodes()`、`ggml_graph_n_nodes()`：取得 node 或 node 数量。
+- `ggml_graph_get_tensor()`：按名称在 leaf 和 node 中查找 tensor。
+- `ggml_graph_print()`：输出 graph 的 node/leaf 信息。
+- `ggml_graph_dump_dot()`：把 graph 写成 Graphviz DOT 文件。
+- `ggml_graph_clear()`：清空 node、leaf 数量和 visited 状态，不修改 tensor data。
+
+`ggml_graph_view()` 和 graph 的内部字段定义在 `src/ggml-impl.h`，不属于普通调用者使用的公开接口。
+
+### 当前不可用的声明
+
+`include/ggml.h` 声明了 `ggml_graph_export()` 和 `ggml_graph_import()`，但当前仓库没有对应实现，构建出的 `libggml-base` 也不导出这两个符号，因此当前版本不应调用它们。
 
 ## 4.ggml_backend
 ggml 后端大体可按下面的层次理解：
