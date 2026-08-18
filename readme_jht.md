@@ -614,160 +614,147 @@ ggml_backend_free(backend);
 
 若使用 scheduler，graph 的拆分、buffer 分配和执行提交由 scheduler 统一协调；不要再把 graph 直接提交给单个 backend。scheduler 的完整流程在后文单独说明。
 
-## 5.ggml_gallocr
-gallocr（graph allocator）用于 graph 在不同后端上的张量内存管理。  
-它通过预先规划内存布局来尽量复用图中的中间张量内存。  
+## Tensor allocator 与 graph allocator
 
-`ggml_backend_alloc_ctx_tensors` 分配的是 context 中 tensor 的存储 buffer（权重）；`ggml_gallocr` 主要处理图执行阶段的张量分配（workspace buf）。  
+`src/ggml-alloc.c` 中有两类用途不同的 tensor allocator：
 
-ggml_gallocr 的典型使用流程：
-- `ggml_gallocr_new`
-- `ggml_gallocr_reserve`
-- `ggml_gallocr_alloc_graph`
-- `ggml_gallocr_get_buffer_size`
-- 整个流程从 buffer type 出发，先创建图内存分配器 gallocr  
-- 然后用最坏情况 graph 估算执行期中间张量需要的显存/内存，并 reserve  
-- 真正执行前再把 offset/base_ptr 回写到 graph 里的 tensor 上  
+| 分配器 | 输入 | 分配方式 | 典型用途 |
+| --- | --- | --- | --- |
+| `ggml_tallocr` | 一个已经存在的 backend buffer | 只向前移动 offset，不回收 | 将一组长期存在的 tensor 顺序放入 buffer，例如 context tensor 的静态分配 |
+| `ggml_gallocr` | 一个或多个 buffer type，以及一张 graph | 根据 graph 生命周期规划、回收并复用 offset | graph 的 input、output 和中间结果等计算 tensor |
 
-**5.0 角色边界**  
-可以把 ggml 里的 tensor 数据分成两类看：  
-1. 静态 tensor / 权重  
-   一般通过 `ggml_backend_alloc_ctx_tensors` 或模型加载阶段直接拥有自己的 buffer  
-2. graph 执行期中间 tensor  
-   这部分生命周期短，适合交给 `ggml_gallocr` 统一规划、复用和回收  
+二者分配的都是 **tensor 数据区**。不要把 gallocr 管理的 compute buffer 与 CPU `ggml_cplan.work_data` 混为一谈：前者保存 graph tensor 的值，后者是 CPU kernel 在一次计算中使用的临时工作区。
 
-所以 `ggml_gallocr` 不是“给所有 tensor 分配内存”，而是“给这次 graph 执行过程中需要的 tensor 布局做一次整体规划”。  
+### `ggml_tallocr`：单 buffer 线性分配
 
-**5.1 核心结构**  
-1. `ggml_gallocr`  
-   图级分配器，管理多个 `buft/buffer`，并记录 graph 中每个 node/leaf 最终落到哪个 buffer、哪个 offset。  
-   关键成员：
-   - `bufts[]`：每个后端对应的 buffer type
-   - `buffers[]`：真正分配出来的 backend buffer
-   - `buf_tallocs[]`：每个 buffer 对应的动态分配器
-   - `hash_set + hash_values[]`：按 tensor 指针建立哈希表，记录该 tensor 的生命周期和分配信息
-   - `node_allocs[] / leaf_allocs[]`：把 reserve 阶段得到的 `(buffer_id, offset, size_max)` 固化下来，供后续 alloc_graph 直接回写  
+`ggml_tallocr_new(buffer)` 保存 buffer、base、alignment 和当前 offset。每次调用 `ggml_tallocr_alloc()` 时，它会：
 
-2. `ggml_dyn_tallocr`  
-   单个 buffer 内部的动态分配器。  
-   它不关心 graph，只关心“当前 buffer 里哪些 free block 可用”。  
-   关键成员：
-   - `alignment`
-   - `free_blocks[]`
-   - `n_free_blocks`
-   - `max_size`：本轮规划过程中用到过的最大地址，用于决定最终 buffer 要申请多大  
+1. 通过 buffer type 的 `get_alloc_size` 取得 tensor 实际分配大小。
+2. 按 buffer alignment 补齐大小和地址。
+3. 检查剩余容量；容量不足会直接中止。
+4. 调用 `ggml_backend_tensor_alloc()`，把 buffer 和 `base + offset` 绑定到 tensor。
+5. 将 offset 移到下一段空间。
 
-3. `hash_node`  
-   gallocr 在 reserve 期间给每个 tensor 维护的生命周期状态：
-   - `n_children`：还有多少后继节点会继续使用它
-   - `n_views`：还有多少 view 依赖它
-   - `buffer_id`
-   - `offset`
-   - `allocated`：当前是否还占着 gallocr 自己管理的内存  
+它没有单 tensor 的 free 或复用操作，也不拥有传入的 buffer。`ggml_backend_alloc_ctx_tensors_from_buft()` 内部会先创建一个或多个实际 buffer，再用 `ggml_tallocr` 将对应范围内尚未分配的 tensor 顺序排入其中。
 
-4. `node_alloc / leaf_alloc`  
-   reserve 阶段的结果快照。  
-   后面 `ggml_gallocr_alloc_graph` 不再重新推导布局，而是直接使用这些快照给 tensor 初始化 backend 地址。  
+### `ggml_gallocr` 的角色与所有权
 
-**5.2 ggml_gallocr_new_n**
-根据一个或多个 buffer type 创建 gallocr
+graph allocator 面向整张前向 graph 规划 tensor 数据区。它不只处理“中间 tensor”：只要 tensor 尚无数据且不是 view，graph 中的 leaf、显式 input、普通 node 和 output 都可能由它分配。已经有 `data` 的 tensor 被视为外部分配，不会由 gallocr 接管。
+
+单 buffer 场景可直接使用 CPU buft：
+
 ```c
-// 获取一个 gallocr
-ggml_gallocr_t allocr = ggml_gallocr_new(buft);
-// 获取 n_bufs 个 buffer type 对应的 gallocr
-ggml_gallocr_t allocr_n = ggml_gallocr_new_n(bufts, n_bufs);
+ggml_gallocr_t galloc =
+    ggml_gallocr_new(ggml_backend_cpu_buffer_type());
 ```
 
-`ggml_gallocr_new_n` 的关键点：  
-- `galloc->bufts[i] = bufts[i]`
-- 为每个 buft 找对应的 `ggml_dyn_tallocr`
-- 如果多个 backend 使用的是同一个 buft，则共享同一个 `ggml_dyn_tallocr`  
+`ggml_gallocr_new_n(bufts, n_bufs)` 则创建多个逻辑 buffer slot。`bufts[i]` 表示 slot `i` 使用的内存类型，而不是必然对应一个不同 backend。如果多个 slot 传入的是同一个 buft 指针，它们会共享同一个动态分配器，reserve 后也指向同一个实际 buffer。
 
-这意味着：  
-不同 backend 只要底层 buffer type 相同，就可以复用同一套 buffer 规划逻辑，不需要重复维护 allocator。  
+gallocr 内部主要保存：
 
-**5.3 ggml_gallocr_reserve_n**  
-根据 graph 规划计算节点所需内存，并为后续分配做预留。  
-这一步常用于“先用最坏情况图估算一次内存”，避免运行中频繁重分配。
-主流程如下：  
-1. 根据 `graph->n_nodes + graph->n_leafs` 计算最小 hash size，再额外加 25% 冗余  
-2. reset 每个 `ggml_dyn_tallocr`  
-   reset 后初始只有一个超大 free block，offset=0  
-3. 调用 `ggml_gallocr_alloc_graph_impl` 做一次“模拟分配”  
-4. 根据模拟结果，把每个 node/leaf 的 `(buffer_id, offset, size_max)` 写入 `node_allocs[] / leaf_allocs[]`
-5. 根据各 `ggml_dyn_tallocr.max_size` 的结果，真正申请或扩容 backend buffer  
+- `bufts[]` 与 `buffers[]`：逻辑 slot 的内存类型及实际 backend buffer。
+- `buf_tallocs[]`：每种不同 buft 对应的动态 offset 分配器。
+- `hash_set` 与 `hash_values[]`：reserve 期间每个 tensor 的引用数、view 数、buffer id、offset 和占用状态。
+- `node_allocs[]` 与 `leaf_allocs[]`：reserve 结果的快照，按 graph 中的位置保存 node 输出、各个 source 及 leaf 的分配信息。
 
-`ggml_gallocr_alloc_graph_impl` 是 reserve 的核心。它做的不是给 tensor 立刻绑地址，而是先把整张图走一遍，算出每个 tensor 应该落在哪个 offset。  
+gallocr 拥有其创建的 backend buffer。`ggml_gallocr_free()` 会释放所有不重复的 buffer 和内部规划状态；此后绑定在这些 buffer 上的 tensor 数据地址全部失效。buffer type 本身不由 gallocr 释放。
 
-它内部大致分三段：  
-1. 先处理 leaf  
-   叶子节点先尝试分配，避免后续节点覆盖掉它们  
-2. 再遍历 node 统计生命周期  
-   - 如果 node 是 view，则给 `view_src.n_views++`
-   - 对每个 `src` 做 `n_children++`
-   - 显式 input tensor 会提前 allocate  
-3. 按拓扑顺序正式“模拟执行”  
-   - 先确保父节点已分配
-   - 再给当前 node 分配
-   - 当前 node 用完父节点后，把父节点 `n_children--`
-   - 若某父节点 `n_children == 0 && n_views == 0`，则把它占用的内存回收到 free block 池中  
+### `reserve`：模拟生命周期并预留实际 buffer
 
-`ggml_gallocr_allocate_node` 的分配策略：  
-- 如果 op 支持 inplace，则优先尝试复用父节点 buffer  
-- 只有当父节点满足“仅有一个 child、没有 view、layout 相同、且不是 output”时，才允许复用  
-- 否则走 `ggml_dyn_tallocr_alloc` 新分配 offset  
+`ggml_gallocr_reserve()` 或 `ggml_gallocr_reserve_n()` 的工作分成两个阶段：
 
-`ggml_dyn_tallocr_alloc` 的策略可以理解成 best-fit：  
-- 优先在已有 free block 中找一个 `>= size` 且最接近 size 的块  
-- 如果前面的 free block 都不合适，再使用最后一个 free block 兜底  
-- 分配成功后切掉这段 free block，更新 `max_size`  
-
-`ggml_dyn_tallocr_free_tensor` 释放时会把空间插回 `free_blocks[]`，并尝试和前后相邻块合并。  
-所以 gallocr 的“内存复用”本质上是：  
-- 拓扑执行时按生命周期回收中间 tensor  
-- 后续 tensor 再从 free block 池里复用这段空间  
-
-**5.4 ggml_gallocr_alloc_graph**  
-根据 reserve 阶段的规划，为 graph 中张量设置 `data` 指针或对应 backend buffer 内地址。
-这一步不再重新规划，只负责把 reserve 阶段记录下来的布局真正绑定到 tensor 上。  
-
-流程如下：  
-1. 先检查当前 graph 是否需要重新 reserve  
-   - 若 `n_nodes/n_leafs` 变化了，或者某 tensor 当前大小超过了 reserve 时记录的 `size_max`，则认为规划失效  
-2. 单 buffer 场景下，可自动重新 `ggml_gallocr_reserve`  
-3. 多 buffer 场景下，不能自动重排，需要外部先显式调用 `ggml_gallocr_reserve_n`  
-4. reset backend buffer  
-5. 遍历 leafs 和 nodes，调用 `ggml_gallocr_init_tensor` 回写地址  
-
-`ggml_gallocr_init_tensor` 有两种主要情况：  
-1. 普通 tensor  
-   - `base = ggml_backend_buffer_get_base(buffer)`
-   - `addr = base + offset`
-   - `ggml_backend_tensor_alloc(buffer, tensor, addr)`  
-2. view tensor  
-   - 不自己占有新内存
-   - 通过 `ggml_backend_view_init(tensor)` 建立对源 tensor 的 view 关系  
-
-所以 `reserve` 决定布局，`alloc_graph` 只是把布局落到 tensor 上。  
-
-**5.5 数据流向**
-数据可大致分为权重和中间计算结果：  
-1. 权重 / 静态 tensor  
-   `ggml_init_params.no_alloc = false` 时，可直接放在 `ggml_context.mem_buffer` 中  
-   `no_alloc = true` 时,mem_buffer只持有info信息，权重由 `ggml_backend_alloc_ctx_tensors` 为这些 tensor 分配 backend buffer  
-2. 中间计算结果  
-   `ggml_gallocr` 在图执行阶段按需规划和复用  
-
-一次完整调用链可以理解为：  
-```c
-ggml_gallocr_t galloc = ggml_gallocr_new_n(bufts, n_bufs);
-ggml_gallocr_reserve_n(galloc, graph, node_buffer_ids, leaf_buffer_ids); // 只规划，不改 graph
-ggml_gallocr_alloc_graph(galloc, graph); // 把 offset/base_ptr 回写到 tensor
-size_t sz = ggml_gallocr_get_buffer_size(galloc, buffer_id);
+```text
+graph 生命周期模拟 -> 得到每个 tensor 的 (buffer_id, offset, size_max)
+                  -> 按各 buft 的峰值大小创建或扩容实际 buffer
 ```
 
-`ggml_gallocr_get_buffer_size` 返回的是对应 backend buffer 的真实 size。  
-如果多个 backend 共享了同一个底层 buffer，它只在第一次出现时返回 size，避免重复统计。  
+因此 reserve 虽然不会给传入 graph 的 tensor 写入 `data` 或 `buffer`，但它不只是计算一个数字：它会在 gallocr 内部实际创建或扩容 backend buffer。
+
+生命周期模拟的大致过程如下：
+
+1. 重置 tensor 哈希状态和每个动态 offset 分配器。
+2. 先为未预分配的 leaf 规划空间。
+3. 遍历 node，统计每个 source 的 `n_children` 和每个 view source 的 `n_views`；带 `GGML_TENSOR_FLAG_INPUT` 的 tensor 提前分配，避免其地址与其他 graph input 重叠。
+4. 按 graph 中的 node 顺序模拟执行：确保 source 已分配，再分配当前 node。
+5. 当前 node 消耗完 source 后递减引用计数；当 `n_children == 0` 且没有存活 view 时，把 gallocr 拥有的空间归还空闲表。
+6. 将最终规划写入 `node_allocs[]` 和 `leaf_allocs[]`，然后按每个动态分配器的 `max_size` 创建或扩容 buffer。
+
+动态 offset 分配器维护按地址排序的 free block。它优先对有限的已回收块做近似 best-fit；都不合适时，才从最后的未使用尾部继续增长。释放时会与相邻 free block 合并。这里的“释放”只是规划阶段将 offset 归还空闲表，不会逐个调用 backend buffer 的 free。
+
+已分配的 buffer 只在新需求更大时扩容，不会因为后续 graph 较小而自动缩小。因此 `ggml_gallocr_get_buffer_size()` 返回当前实际持有的 buffer 大小，它可能大于最近一次 graph 的最低需求。
+
+### 生命周期标志与安全的存储复用
+
+`ggml_set_input(tensor)` 和 `ggml_set_output(tensor)` 会影响 allocator，而不只是给 tensor 添加说明：
+
+- input 会在 graph 模拟的早期分配，保证多个输入拥有互不覆盖的地址。
+- output 在其最后一个 graph consumer 结束后仍不会被回收，也不会作为其他 node 的原地复用来源。
+
+对于一组允许原地执行的 op，gallocr 可能让输出直接使用某个 source 的 offset。普通 source 至少需要满足：
+
+- 该存储由当前 gallocr 管理，而不是外部数据。
+- source 只剩当前这一个 child，且没有其他存活 view。
+- source 与输出的 type、`ne[]` 和 `nb[]` 完全一致。
+- source 及其 view source 不是 graph output。
+
+view source 还需要满足更严格的别名和起始地址条件。条件不满足时，allocator 会分配新的 offset。
+
+这种“原地”是 allocator 根据 graph 生命周期进行的 物理存储复用。它不要求调用者使用名称带 `_inplace` 的构图函数，也不改变 graph 的逻辑依赖；能否复用由当前实现的 op allowlist 和上述安全条件共同决定。
+
+### `alloc_graph`：将规划绑定到 tensor
+
+`ggml_gallocr_alloc_graph(galloc, graph)` 使用 reserve 保存的按位置规划，将实际地址绑定到一张 graph：
+
+1. 检查 node/leaf 数量以及待分配 tensor 的大小是否仍能放入保存的 `size_max`。
+2. 调用每个 backend buffer 的可选 `reset`；reset 不等于把数据清零。
+3. 对普通 tensor 计算 `buffer base + offset`，并调用 `ggml_backend_tensor_alloc()`。
+4. view 不申请独立空间，而是在 view source 已有 backend buffer 时调用 `ggml_backend_view_init()`。
+5. 已经带有 `data` 的外部 tensor 保持不变。
+
+单 buffer gallocr 在首次使用或检测到数量、大小不匹配时，会自动调用 `ggml_gallocr_reserve()`。多 buffer gallocr 无法自行恢复各 node/leaf 应使用的 buffer id；需要调用方先用正确的映射再次执行 `ggml_gallocr_reserve_n()`，否则 `alloc_graph` 返回 false。
+
+当前实现的自动检查并不会完整比较 graph 的依赖拓扑、view 关系、input/output 标志或 buffer 映射。如果 graph 在这些方面发生变化，即使 node 数量和 tensor 大小相同，也必须显式重新 reserve。用于提前 reserve 的“最大 graph”不仅要覆盖最大 shape，还应代表实际 graph 的 node 顺序、生命周期、view 关系、预分配状态和 input/output 标志。
+
+已经绑定到 gallocr buffer 的 tensor 只能在该 buffer 有效期间使用。重新 reserve 可能扩容并替换旧 buffer，释放 gallocr 则一定释放 buffer；不能继续执行或读取仍指向旧地址的 graph。
+
+### 单 CPU buffer 的典型流程
+
+```c
+ggml_gallocr_t galloc =
+    ggml_gallocr_new(ggml_backend_cpu_buffer_type());
+
+// 可选：用能代表最大输入和真实生命周期的 graph 提前扩容。
+if (!ggml_gallocr_reserve(galloc, measure_graph)) {
+    // 处理 buffer 分配失败。
+}
+
+// actual_graph 中需要 gallocr 管理的 tensor 此时应尚未分配数据。
+if (!ggml_gallocr_alloc_graph(galloc, actual_graph)) {
+    // 处理规划失效或 buffer 分配失败。
+}
+
+size_t compute_buffer_size =
+    ggml_gallocr_get_buffer_size(galloc, 0);
+enum ggml_status status =
+    ggml_backend_graph_compute(cpu_backend, actual_graph);
+
+// actual_graph 的计算 tensor 数据在这里失效。
+ggml_gallocr_free(galloc);
+```
+
+提前 reserve 是可选优化。单 buffer 场景可直接调用 `alloc_graph`，由它按需 reserve；显式使用代表性 graph 可以避免输入 shape 在预期范围内变化时反复扩容。
+
+### 多 buffer 与 scheduler 的边界
+
+直接使用 `ggml_gallocr_reserve_n()` 时：
+
+- `node_buffer_ids[i]` 指定 `graph->nodes[i]` 的逻辑 buffer slot。
+- `leaf_buffer_ids[i]` 指定 `graph->leafs[i]` 的逻辑 buffer slot。
+- 映射、graph 结构或所需大小变化后，调用方负责重新 reserve。
+
+如果多个 slot 因相同 buft 而共享实际 buffer，`ggml_gallocr_get_buffer_size()` 只在该实际 buffer 第一次出现的 id 上返回大小，后续重复 id 返回 0，避免汇总时重复计数。
+
+scheduler 负责确定 node/leaf 的 buffer id、插入必要的 copy tensor 并组织 split graph，再把这些映射交给 gallocr；gallocr 只根据给定 graph 和映射决定物理 offset。使用 scheduler 时，应用通常不应再单独为同一 graph 调用 gallocr。后文会继续说明 scheduler 如何驱动 `reserve_n()` 和 `alloc_graph()`。
 
 ## 6.ggml_backend_sched
 后端调度用于分配节点计算。它会把整个 graph 划分成多个 subgraph，每个子图分配给一个 backend，并负责不同 backend 之间的数据流转。  
