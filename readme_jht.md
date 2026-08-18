@@ -1493,7 +1493,13 @@ const char * architecture = gguf_get_val_str(ctx_gguf, key_id);
 i < gguf_get_arr_n(ctx, key_id)
 ```
 
-getter 返回的字符串和数组指针指向 `gguf_context` 内部存储，在修改相应 key 或调用 `gguf_free()` 后不能继续使用。
+getter 返回的 key、value、array 和 string 指针都指向 `gguf_context` 的内部存储，不应长期缓存：
+
+- 调用 `gguf_remove_key()`、任意 `gguf_set_val_*()`、`gguf_set_arr_*()` 或 `gguf_set_kv()` 后，内部 KV vector 可能执行 erase、元素移动或重新分配。此前取得的 `gguf_get_key()`、`gguf_get_val_str()`、`gguf_get_val_data()`、`gguf_get_arr_data()` 和 `gguf_get_arr_str()` 结果都应视为可能失效，而不只是被修改 key 对应的指针。
+- 调用 `gguf_add_tensor()` 后，内部 tensor-info vector 可能重新分配，此前由 `gguf_get_tensor_name()` 返回的名称指针应重新取得。
+- 调用 `gguf_free()` 后，所有指向该 `gguf_context` 内部存储的指针都会失效。
+
+如果这些值需要跨 context 修改操作继续使用，应先复制到调用方拥有的存储；否则应在每次修改后重新调用对应 getter。
 
 ### Tensor info 与数据偏移
 
