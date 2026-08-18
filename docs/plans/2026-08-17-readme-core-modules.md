@@ -182,6 +182,7 @@ Check named fields/functions against `src/ggml-backend.cpp` and run `git diff --
 - Reference: `include/ggml.h`
 - Reference: `src/ggml-quants.h`
 - Reference: `src/ggml-quants.c`
+- Reference: `src/ggml-cpu/ggml-cpu.c`
 - Reference: `src/ggml-cpu/ggml-cpu-traits.cpp`
 
 **Step 1: Prepare the audit**

@@ -1220,14 +1220,40 @@ size_t written = ggml_quantize_chunk(
 GGML_ASSERT(written == dst_size);
 ```
 
+上面的示例使用 `start == 0`，所以 `dst_size = nrows * row_size` 足够。使用非零 `start` 时，源和目标 buffer 都必须包含起始偏移之前的空间。
+
 调用时需要满足以下条件：
 
-1. `src` 按 F32 提供，逻辑上由 `nrows` 行组成，每行有 `n_per_row` 个值。
-2. `n_per_row` 必须能被目标类型的 block size 整除。
-3. `start` 是源 F32 数组中的元素偏移，而不是字节偏移。
-4. `start` 必须同时满足 `start % n_per_row == 0` 和 `start % blck_size == 0`，即本次转换从所声明的行边界开始。
-5. `dst` 必须已经为目标格式分配足够空间；函数不会替调用者分配 tensor 数据。
-6. 返回值是本次写入的目标格式字节数，源码会检查它等于 `nrows * ggml_row_size(type, n_per_row)`。
+1. `type` 必须是当前 `ggml_quantize_chunk()` 支持的目标类型。
+2. `src` 和 `dst` 必须指向有效 buffer。
+3. `start >= 0`、`nrows >= 0` 且 `n_per_row > 0`。
+4. `n_per_row` 必须能被目标类型的 block size 整除。
+5. `start` 是源 F32 数组中的元素偏移，而不是字节偏移。
+6. `start` 必须同时满足 `start % n_per_row == 0` 和 `start % blck_size == 0`，即本次转换从所声明的行边界开始。
+7. 调用方必须预先检查 `nrows * n_per_row`、`start + nrows * n_per_row`、`start_row * row_size` 和相关 buffer 大小计算不会发生整数溢出。
+8. 从原始 `src` 基地址计算，源 buffer 至少需要包含：
+
+```text
+start + nrows * n_per_row
+```
+
+个 F32 元素。
+
+9. 从原始 `dst` 基地址计算，目标 buffer 至少需要包含：
+
+```text
+(start / n_per_row + nrows)
+    * ggml_row_size(type, n_per_row)
+```
+
+字节。函数不会替调用者分配或扩容目标 buffer。
+
+10. 当 `imatrix != NULL` 且目标格式使用 importance weights 时，它至少需要包含 `n_per_row` 个 F32 权重；当前实现会在本次调用处理的每一行中重复使用这组权重，不会根据 `start` 自动移动指针。
+11. 返回值是本次实际写入的目标格式字节数，源码会检查它等于：
+
+```text
+nrows * ggml_row_size(type, n_per_row)
+```
 
 目标写入位置按照下面的方式计算：
 
@@ -1236,7 +1262,9 @@ start_row = start / n_per_row
 dst_offset = start_row * ggml_row_size(type, n_per_row)
 ```
 
-因此，可以用多个不重叠 chunk 填充同一个目标 buffer，但每个 chunk 都必须遵守它所声明的行宽和行边界。
+因此，可以用多个不重叠 chunk 填充同一个目标 buffer，但每个 chunk 都必须使用相同的逻辑布局，并遵守它所声明的行宽、行边界和完整 buffer 容量。
+
+`ggml_quantize_chunk()` 本身没有完整检查参数的正负值、乘加溢出以及源/目标 buffer 容量。满足这些条件是调用方的责任。
 
 当前 `ggml_quantize_chunk()` 支持：
 
