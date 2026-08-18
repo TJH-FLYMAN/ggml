@@ -28,6 +28,120 @@ GGUF 加载模型
 
 本文完整介绍 scheduler 的通用多 backend 调度机制，但具体 backend 的内部实现只介绍 CPU。
 
+## Tensor、数据布局与算子
+
+`ggml_tensor` 不只是一个数据指针。它同时承担三种角色：
+
+1. 描述逻辑数据：`type`、`ne[]` 和 `nb[]` 定义数据类型、形状和字节步长。
+2. 定位物理数据：`buffer`、`data`、`view_src` 和 `view_offs` 描述数据存放位置及别名关系。
+3. 表示计算节点：`op`、`op_params` 和 `src[]` 记录生成该 tensor 的算子及其输入依赖。
+
+### `ggml_tensor` 核心字段
+
+| 字段 | 含义 |
+| --- | --- |
+| `type` | tensor 的存储类型，如 F32、F16、BF16 或块量化类型 |
+| `ne[GGML_MAX_DIMS]` | 各维元素数；当前 `GGML_MAX_DIMS` 为 4 |
+| `nb[GGML_MAX_DIMS]` | 各维字节步长；第 0 维是最内层维度 |
+| `buffer` | 管理 tensor 数据的 backend buffer；context 内联分配时可以为 `NULL` |
+| `data` | tensor 数据地址；尚未分配时可以为 `NULL` |
+| `op` | 生成该 tensor 的 `ggml_op`；普通输入或常量通常为 `GGML_OP_NONE` |
+| `op_params` | 算子的内嵌参数区，例如 offset、stride、axis 或精度配置 |
+| `src[]` | 算子依赖的源 tensor，最多 `GGML_MAX_SRC` 个 |
+| `flags` | tensor 标志；离线推理主要关注 `GGML_TENSOR_FLAG_INPUT/OUTPUT` |
+| `view_src`、`view_offs` | view 的底层 tensor 以及相对底层数据起点的字节偏移 |
+| `name` | 调试、查找和 graph dump 使用的名称 |
+| `extra` | backend 使用的扩展信息，核心代码不解释其具体布局 |
+
+tensor metadata 与 tensor data 的生命周期并不总是绑定：释放 `ggml_context` 会释放其中的 tensor metadata，但 backend buffer 由相应的 buffer 生命周期管理。
+
+### 数据类型、block 与大小
+
+`ggml_type` 大致分为：
+
+- 普通浮点和整数类型，例如 F32、F16、BF16、F64、I8、I16、I32、I64。
+- 块量化类型，例如 Q、K-quant、IQ 和 TQ 系列。多个逻辑元素被编码在一个存储 block 中。
+
+通用 type traits 记录 `type_name`、`blck_size`、`type_size`、是否量化以及参考转换函数。常用查询接口为：
+
+- `ggml_blck_size(type)`：一个存储 block 包含的逻辑元素数；普通类型为 1。
+- `ggml_type_size(type)`：一个完整 block 占用的字节数。仅当 block size 为 1 时，它才等于单个逻辑元素大小。
+- `ggml_row_size(type, ne0)`：第 0 维一整行的字节数，要求 `ne0` 是 block size 的整数倍。
+- `ggml_nbytes(tensor)`：结合 shape 和 stride 计算当前 tensor 布局覆盖的字节范围；非连续 tensor 不应简单使用“元素数 × 元素大小”。
+- `ggml_get_type_traits(type)`：取得该类型的通用 traits。
+
+具体量化 block 的字段布局、转换函数和 CPU dot kernel 在量化章节说明。
+
+### Shape 与 stride
+
+GGML tensor 固定保存四个维度，未使用的高维初始化为 1。`ne[0]` 是最内层维度，二维 tensor 通常可理解为 `ne[1]` 行、每行 `ne[0]` 个逻辑元素。
+
+新建连续 tensor 时，默认 stride 为：
+
+```text
+nb[0] = ggml_type_size(type)
+nb[1] = nb[0] * ne[0] / ggml_blck_size(type)
+nb[i] = nb[i - 1] * ne[i - 1], i >= 2
+```
+
+对于 block size 为 1 的普通类型，元素 `(i0, i1, i2, i3)` 的字节偏移为：
+
+```text
+i0*nb[0] + i1*nb[1] + i2*nb[2] + i3*nb[3]
+```
+
+量化 tensor 的第 0 维按 block 编码，不能用单个逻辑元素直接套用上述 `i0*nb[0]`；应按 block 和 row size 访问。
+
+`ggml_is_contiguous()` 检查 stride 是否符合连续布局。transpose 或 permute 只交换 shape/stride 时通常会得到非连续 tensor；需要连续数据的算子可通过 `ggml_cont()` 创建实际的数据重排节点。
+
+### Tensor 数据的来源
+
+tensor data 常见有三种来源：
+
+1. context 内联数据：`no_alloc == false` 时，普通非 view tensor 的 metadata 后可以紧跟数据区，此时 `buffer == NULL`。
+2. backend buffer：`no_alloc == true` 时先只创建 metadata，之后由 backend allocator 设置 `buffer` 和 `data`。CPU buffer 中的 `data` 是主机可访问地址。
+3. view：不申请独立数据区，通过 `view_src` 和 `view_offs` 复用底层 tensor 的存储。
+
+创建嵌套 view 时，`ggml_new_tensor_impl()` 会把引用折叠到最底层 `view_src`，并累加 offset。因此 `view_offs` 是相对底层 tensor 的绝对字节偏移，而不是只相对上一层 view。
+
+### View、reshape、copy 与 in-place
+
+- `ggml_view_1d/2d/3d/4d`：指定新的 shape、stride 和 byte offset，共享底层数据。
+- `ggml_reshape_*`：要求源 tensor 连续且元素总数不变，只改变 shape 并共享底层数据。
+- `ggml_permute()` / `ggml_transpose()`：交换 `ne[]` 和 `nb[]`，不搬运底层数据。
+- `ggml_cont()`：创建 `GGML_OP_CONT` 节点，执行后得到按目标 shape 连续存放的数据。
+- `ggml_cpy(ctx, a, b)`：返回目标 `b` 的 view，并创建把 `a` 写入 `b` 的 `GGML_OP_CPY` 节点；不是让 `b` 改为引用 `a` 的存储。
+- `_inplace` 算子：结果 tensor 是第一个输入的 view，但仍是带有 `op/src[]` 的独立 graph node。执行时会覆盖输入存储，必须确保该输入之后不再需要原值。
+
+调用者必须保证 view 按最终 shape/stride 覆盖的 byte range 落在底层 tensor 数据范围内。view 的 shape 不需要逐维小于源 tensor；真正的约束是最终访问不能越界。`ggml_new_tensor_impl()` 会检查初始连续布局的 `data_size + view_offs`，而 `ggml_view_2d/3d/4d()` 随后可覆盖高维 stride，因此自定义 stride 的边界仍需调用者保证。
+
+### 算子调用只构造计算关系
+
+以 `ggml_add()` 为例，函数会检查输入 shape 是否可 repeat，创建结果 tensor，然后记录：
+
+```text
+result->op     = GGML_OP_ADD
+result->src[0] = a
+result->src[1] = b
+```
+
+此时只完成结果 shape、存储需求和依赖关系的描述；即使结果已经有 data 空间，其中也还没有有效计算结果。真正的数值计算发生在 graph 被 backend 执行时。
+
+离线推理常见算子可按用途理解：
+
+| 类别 | 代表 API |
+| --- | --- |
+| 元素级与激活 | `ggml_add`、`ggml_mul`、`ggml_scale`、`ggml_relu`、`ggml_silu` |
+| reduction 与 normalization | `ggml_sum`、`ggml_mean`、`ggml_norm`、`ggml_rms_norm` |
+| 矩阵运算 | `ggml_mul_mat`、`ggml_mul_mat_id`、`ggml_out_prod` |
+| layout 与数据移动 | `ggml_dup`、`ggml_cpy`、`ggml_cont`、`ggml_reshape_*`、`ggml_view_*`、`ggml_permute` |
+| 索引、mask 与 softmax | `ggml_get_rows`、`ggml_diag_mask_inf`、`ggml_soft_max` |
+| 卷积与图像操作 | `ggml_im2col`、`ggml_conv_1d`、`ggml_conv_2d`、`ggml_pool_2d`、`ggml_upscale` |
+| 序列与 attention | `ggml_rope`、`ggml_flash_attn_ext`、`ggml_ssm_scan`、`ggml_gated_linear_attn` |
+| 自定义计算 | `ggml_map_custom1/2/3` |
+
+不同 backend 不一定支持全部 `ggml_op`；scheduler 分配节点时会通过 device 的 `supports_op` 能力查询选择可执行的 backend。
+
 ## 1. GGUF
 gguf模型解析后，元数据与 tensor info 保存在 `gguf_context`  
 
