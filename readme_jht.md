@@ -198,58 +198,121 @@ gguf_context * gguf_ctx_empty = gguf_init_empty();
 4. 若 `no_alloc == false`，读取整块 tensor data，并让各 tensor 的 `data` 指向相应 offset  
 5. 若 `no_alloc == true`，只创建 tensor metadata，不读取 tensor data blob 到 `ggml_context`  
 
-## 2. ggml_context  
-`ggml_context` 通过 `ggml_object` 链表管理 context 中的对象；对象不只包括 tensor，也包括 graph、work buffer 等。  
-model_data也视为ggml_object,并为ctx的头节点。+1 指 model_data对应的ggml_tensor  
+## `ggml_context` 与对象内存池
 
-**2.1 ggml_new_tensor**  
-为每个 tensor 在 `ggml_context` 内存池分配对象。分配对象至少包括 `ggml_object + ggml_tensor metadata`；只有在非 view 且 `!no_alloc` 时，才会额外为 tensor data 分配空间。  
+`ggml_context` 是一个固定容量的 arena。它管理内存池、分配策略和 `ggml_object` 链表，tensor、graph 和 work buffer 都以 object 的形式顺序放入该内存池。context 不会自动扩容，也不支持单独释放其中某个 tensor 或 graph。
 
-1. 为 `ggml_object` 分配内存  
-在 `ggml_context` 的内存池中分配 object 对象内存
+### Context 状态与内存所有权
+
+`ggml_context` 的核心状态包括：
+
+- `mem_size`、`mem_buffer`：arena 的容量和起始地址。
+- `mem_buffer_owned`：内存池是否由 GGML 内部分配。
+- `no_alloc`：新建普通 tensor 时是否跳过 tensor data 分配。
+- `n_objects`、`objects_begin`、`objects_end`：object 数量和单向链表首尾。
+
+`ggml_init()` 根据 `ggml_init_params` 初始化 context：
+
+- `mem_buffer == NULL`：GGML 分配按 `GGML_MEM_ALIGN` 对齐的内存，`mem_buffer_owned = true`。
+- `mem_buffer != NULL`：使用调用者提供的内存，调用者必须保证地址满足对齐要求；context 不负责释放这块内存。
+- `no_alloc == true`：普通 tensor object 只包含 metadata，`data` 初始通常为 `NULL`。
+- `no_alloc == false`：普通、非 view tensor 可在 metadata 后内联分配 data。
+
+### `ggml_object` 与 arena 布局
+
+`ggml_object` 是内存池中每段对象的头部：
+
 ```c
 struct ggml_object {
-    size_t offs;   // object 数据区相对于 mem_buffer 的偏移
-    size_t size;   // object 大小包含  struct ggml_tensor在内）  
+    size_t offs;                  // payload 相对 ctx->mem_buffer 的偏移
+    size_t size;                  // 按 GGML_MEM_ALIGN 对齐后的 payload 大小
     struct ggml_object * next;
     enum ggml_object_type type;
-}
-```
-2. 为 `ggml_tensor` 分配内存  
-`struct ggml_tensor * tensor_new = (char *) ctx->mem_buffer + obj->offs`  
-3. 为 tensor_data 分配内存  
-仅当 `view_src == NULL && !ctx->no_alloc` 时，tensor data 才会随同该 object 一起分配  
-
-**2.2 ggml_context**  
-获取 `ggml_context`  
-```c
-// no_alloc = true : 只分配 tensor metadata
-// no_alloc = false: 普通 tensor 可在 context 内直接分配 data
-bool no_alloc = false;
-const size_t mem_size =
-    no_alloc ?
-    (n_tensors    )*ggml_tensor_overhead() :
-    (n_tensors + 1)*ggml_tensor_overhead() + ctx->size;// +1对应tensor_data
-struct ggml_init_params params = {
-/*mem_size   =*/ mem_size,
-/*mem_buffer =*/ nullptr,
-/*no_alloc   =*/ no_alloc,
 };
+```
+
+`size` 不包含 `ggml_object` 头本身。object 在 `mem_buffer` 中依次追加：
+
+```text
+[object header][aligned payload][object header][aligned payload] ...
+```
+
+不同 object type 的 payload 为：
+
+```text
+tensor:      [ggml_tensor][optional inline data][padding]
+graph:       [ggml_cgraph + nodes/leafs/hash arrays][padding]
+work buffer: [raw bytes][padding]
+```
+
+`obj->offs` 始终指向 payload，因此 tensor metadata 地址为：
+
+```c
+struct ggml_tensor * tensor =
+    (struct ggml_tensor *) ((char *) ctx->mem_buffer + obj->offs);
+```
+
+### `ggml_new_tensor_impl()` 的分配过程
+
+新建 tensor 的主要步骤是：
+
+1. 根据 type 和 shape 计算连续布局的 `data_size`。
+2. 若是嵌套 view，将 `view_src/view_offs` 折叠到最底层 tensor。
+3. 仅当 `view_src == NULL && !ctx->no_alloc` 时，把 `data_size` 加入 object payload。
+4. 调用 `ggml_new_object()` 分配并对齐 payload。
+5. 在 `obj->offs` 初始化 `ggml_tensor`，设置 shape、stride、view 和 data。
+6. 将 object 追加到 context 链表并增加 `n_objects`。
+
+context 容量不足时不会增长内存池，因此 `mem_size` 必须在构图前估算充分。
+
+### `mem_size` 估算
+
+`ggml_tensor_overhead()` 返回一个 tensor object 的固定开销，即 object header 与 `ggml_tensor` metadata 之和，不包含 tensor data。
+
+如果 context 只保存 `n_tensors` 个 tensor metadata，可按下面的方式初始化：
+
+```c
+const size_t mem_size = n_tensors * ggml_tensor_overhead();
+
+struct ggml_init_params params = {
+    .mem_size   = mem_size,
+    .mem_buffer = NULL,
+    .no_alloc   = true,
+};
+
 struct ggml_context * ctx = ggml_init(params);
 ```
- 
-`ggml_context` 中常见的几种内存使用方式：
-1. 在 `gguf_init_from_file` 中创建 `ggml_context`（`ggml_ctx` 由加载逻辑创建）
-   a. `gguf_init_params.no_alloc == false && gguf_init_params.ctx != nullptr`
-      先读取整块 tensor data，再创建各 tensor metadata；各 tensor 的 `data` 根据 `info.offset` 指向这块连续数据 Abcbcbcbcbc  
-   b. `gguf_init_params.no_alloc == true && gguf_init_params.ctx != nullptr`
-      只创建 tensor metadata，tensor data 不读入该 `ggml_context`
-2. 单独 `ggml_init()` 创建 `ggml_context`（适用于动态构建张量）
-   a. `params.no_alloc = false`
-      tensor metadata 与 tensor data 都可直接从 `ggml_context.mem_buffer` 中分配 ， tensor_num个[object_metadata tensor_metadata + tensor_data]内存中排列，每个张量元数据与数据连续存储  abcabcabc...abc 
-   b. `params.no_alloc = true`
-      此时张量元数据在 `ggml_ctx.mem_buffer` 中，但 `data` 通常为 `NULL`；后续可调用 `ggml_backend_alloc_ctx_tensors()` 为这些张量分配 `ggml_backend_buffer` 并绑定  
 
+使用 context 内联 data 时，每个普通非 view tensor 还需要增加：
+
+```text
+GGML_PAD(data_size, GGML_MEM_ALIGN)
+```
+
+如果同一个 context 中还要创建 graph，需要再计入 `ggml_graph_overhead()`，或用 `ggml_graph_overhead_custom()` 按自定义 graph size 计算。view 只需要 tensor overhead，不分配自己的 data。
+
+### 常见使用模式
+
+1. metadata-only context
+   - `no_alloc = true`。
+   - 先构造 tensor metadata，之后由 `ggml_backend_alloc_ctx_tensors()` 或 graph allocator 绑定 backend buffer。
+
+2. context 内联数据
+   - `no_alloc = false`。
+   - 普通非 view tensor 的 metadata 与 data 位于同一个 object payload 中。
+   - 常用于小型 CPU tensor、测试或不需要 backend allocator 的工具代码。
+
+3. GGUF 创建的 context
+   - `params.ctx != NULL && no_alloc == false` 时，加载器先创建一个 `GGML_TYPE_I8` tensor 保存整个 GGUF tensor-data blob，再临时切换为 `no_alloc` 创建模型 tensor metadata，并让各 tensor 的 `data` 指向 blob 内的对应 offset。
+   - `params.ctx != NULL && no_alloc == true` 时，只创建模型 tensor metadata，不读取 tensor-data blob。
+
+因此 GGUF 加载代码中 `(n_tensors + 1) * ggml_tensor_overhead()` 的 `+1` 是 data-blob tensor，不是通用 context 规则。
+
+### Reset 与释放
+
+- `ggml_reset(ctx)`：把 object 计数和链表首尾重置为空，以便从 arena 起点复用内存；它不会清零内存，旧 tensor/graph 指针不能继续使用。
+- `ggml_free(ctx)`：释放 context 本身；只有 `mem_buffer_owned == true` 时才释放 `mem_buffer`。
+- context 不拥有通过独立 backend allocator 创建的 backend buffer。backend buffer 需要通过对应的 buffer API 单独释放。
 
 ## 3.ggml_cgraph
 graph 需要自定义构建，流程：  
