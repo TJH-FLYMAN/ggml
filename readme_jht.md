@@ -756,172 +756,391 @@ ggml_gallocr_free(galloc);
 
 scheduler 负责确定 node/leaf 的 buffer id、插入必要的 copy tensor 并组织 split graph，再把这些映射交给 gallocr；gallocr 只根据给定 graph 和映射决定物理 offset。使用 scheduler 时，应用通常不应再单独为同一 graph 调用 gallocr。后文会继续说明 scheduler 如何驱动 `reserve_n()` 和 `alloc_graph()`。
 
-## 6.ggml_backend_sched
-后端调度用于分配节点计算。它会把整个 graph 划分成多个 subgraph，每个子图分配给一个 backend，并负责不同 backend 之间的数据流转。  
+## Backend scheduler
 
-调用流程如下：
-- 定义计算图时，可用 `ggml_backend_sched_set_tensor_backend` 指定 tensor 的 backend
-- 创建调度器 `ggml_backend_sched_new`
-- 遍历graph,切分subGraph,记录切分子图时需要拷贝的tensor( hv_tensor_copies )
-- 预留 graph 所需内存 `ggml_backend_sched_reserve`
-- 计算时调用 `ggml_backend_sched_graph_compute(sched, graph)`  
+`ggml_backend_sched` 位于 backend 执行接口与 graph allocator 之间，负责：
 
-**6.1 ggml_backend_sched_new**  
-创建调度器时，需要传入 backend 数组。当前实现中：
-- backends 按优先级顺序排列（从高到低且backends[-1] = cpu_backend）
-- 最后一个 backend 必须是 CPU backend
-- 调度器内部会创建 `ggml_gallocr`
-
-`sched_new` 初始化时会分配几类关键数组：  
-1. `hv_tensor_backend_ids`  
-   hash 表大小，默认初始值全为 `-1`，表示“这个 tensor 还没被分配 backend”  
-
-2. `hv_tensor_copies`  
-   单流水线时大小 = `hash_set.size * n_backends`  
-   并行流水线时大小 = `hash_set.size * n_backends * n_copies`  
-```c
-#define tensor_id_copy(id, backend_id, copy_id) sched->hv_tensor_copies[(id) * sched->n_backends * sched->n_copies + (backend_id) * sched->n_copies + (copy_id)]
+```text
+用户 graph
+    -> 为 tensor/node 选择 backend
+    -> 按 backend 切分 split
+    -> 创建必要的 copy tensor
+    -> 调用 gallocr 规划各 buffer
+    -> 按 split 顺序提交执行
 ```
-由tensor_id_copy可知hv_tensor_copies的内存布局，以两个tensor(tensor_a tensor_b)、两个backend为例 (hash_set.size = 2, n_backends = 2)  
 
-hv_tensor_copies内存布局(2 张量a b 、2 后端 cpu gpu)  
-if parallel  
-- size=16（2×2×4），按 [a_cpu_cp0~3,a_gpu_cp0~3,b_cpu_cp0~3,b_gpu_cp0~3] 排列  
+scheduler 的接口支持多个 backend，但本节只具体使用 CPU。即使 scheduler 中只有一个 CPU backend，它仍可统一管理 graph tensor 的计算 buffer、提前 reserve、graph 分配、重复执行和 reset；只是所有 node 都会落在 CPU 上，通常只有一个 split，也不会发生跨 backend copy。
 
-else  
-- size=4（2×2×1），按 [a_cpu,a_gpu,b_cpu,b_gpu] 排列  
+如果应用只需要执行一张简单的 CPU graph，可以直接组合 `ggml_gallocr` 和 `ggml_backend_graph_compute()`。如果希望统一管理最大 graph 预留、输入分配、重复执行及未来的 backend 调度，使用 scheduler 更方便。
 
-3. `context_buffer_size`  
-   用于内部临时 `ggml_context`，存放 split 过程中构造出来的 copy tensor / dependency tensor / graph view metadata。  
-   大小按最坏情况估算：  
-- graph_size * subGraph_max_input_num * 2 * sizeof(struct ggml_tensor)  ，n个node,切分n个subgraph,一个node最多6输入6输出  
-- ggml_graph_overhead_custom(graph_size, false);  graph大小  
+### 创建参数与对象所有权
 
-4. `node_backend_ids / leaf_backend_ids`  
-   记录“复制后的 graph”中每个 node/leaf 应该由哪个 backend/buft 来分配  
+单 CPU scheduler 可以这样创建：
 
-5. `prev_node_backend_ids / prev_leaf_backend_ids`  
-   用来判断这次 split 后 backend/buft 是否变了，如果变了，说明上一轮的 gallocr 规划可能失效，需要重新 reserve  
+```c
+ggml_backend_t cpu_backend = ggml_backend_cpu_init();
 
-6. `splits / splits_capacity`  
-   初始默认 16 个 split，后续按需翻倍扩容  
+ggml_backend_t backends[] = {
+    cpu_backend,
+};
 
-7. `galloc = ggml_gallocr_new_n(sched->bufts, n_backends)`  
-   scheduler 自己并不直接做 offset 分配，而是把切好的 graph 交给 gallocr 去做内存布局  
+ggml_backend_sched_t sched = ggml_backend_sched_new(
+    backends,
+    NULL,                    // 使用各 backend 的默认 buft
+    1,
+    GGML_DEFAULT_GRAPH_SIZE,
+    false);                  // CPU-only 不启用 pipeline copies
+```
 
-**6.2 核心结构**  
-1. `ggml_backend_sched_split`  
-   表示一个连续子图：
-   - `backend_id`
-   - `i_start / i_end`
-   - `inputs[]`：这个 split 运行前需要从别的 backend copy 进来的 tensor
-   - `graph`：原 graph 的一个 view  
+`ggml_backend_sched_new()` 的参数含义如下：
 
-2. `ggml_backend_sched`  
-   它同时维护三套信息：  
-   - tensor 到 backend 的映射：`hv_tensor_backend_ids`
-   - tensor 的跨 backend copy：`hv_tensor_copies`
-   - split 结果及其 graph view：`splits[] + graph`  
+- `backends[]`：执行 backend 数组，索引越小优先级越高。
+- `n_backends`：backend 数量，必须大于 0 且不超过 `GGML_SCHED_MAX_BACKENDS`。
+- `backends[n_backends - 1]`：代码要求最后一个 backend 的 device 类型必须是 CPU。
+- `bufts[]`：可选的计算 buffer type 数组；传入 `NULL` 时使用各 backend 的默认 buft。每个 backend 必须支持对应 buft。
+- `graph_size`：scheduler 内部 hash、node/leaf 映射及临时 graph 的容量依据。必须覆盖实际 graph 的 node 和 leaf 数量，否则会触发断言。
+- `parallel`：是否启用多个 pipeline copy slot。
 
-所以 sched 的职责不是“真正执行一个 op”，而是：  
-- 决定每个 node 放哪一个 backend  
-- 在 backend 边界处创建 copy tensor  
-- 组织 split 图  
-- 调 gallocr 给 split 图分配内存  
-- 最后按 split 顺序驱动各 backend 执行  
+scheduler 拥有：
 
-**6.3 ggml_backend_sched_split_graph**  
-切分子图时，核心工作包括：
-- 记录 leaf/node 对应的 backend id
-- 根据 op 支持情况、tensor 所在 backend、优先级等信息决定节点归属
-- split与split.input的backend不同时，插入cp_tensor(仅backend不同)。相邻子图 backend 不同
+- 内部 gallocr 及其计算 buffer。
+- backend/slot 映射表。
+- copy tensor 和依赖 tensor 的元数据 context。
+- split 数组、内部 allocation graph 和可选 event。
 
-`ggml_backend_sched_split_graph` 大体可以分成 5 个 pass：  
+scheduler 不拥有：
 
-1. pass1: 根据 tensor 当前所在位置做初始 backend 归属  
-   - 预分配 tensor / weight tensor 优先跟随自己已有的 buffer/backend
-   - graph input 默认放到最后一个 backend，也就是 CPU backend  
+- 传入的 backend 实例。
+- 用户创建的 graph 和 tensor 元数据 context。
+- 已经预分配的权重或输入 buffer。
 
-2. pass2: 扩散 backend 归属  
-   - 先向下、再向上扩散高优先级 backend（通常是 GPU）
-   - 再扩散剩余 backend  
-   目的不是立刻得到最优解，而是尽量把相邻、兼容的 node 拉到同一个 backend，减少 split 和 copy  
+因此释放顺序应为：先确保执行完成，再释放 scheduler，最后释放 backend。`ggml_backend_sched_free()` 不会替调用方释放 backend。
 
-3. pass3: 升级到更高优先级 backend  
-   如果一个 node 当前所在 backend 的 buft 和更高优先级 backend 相同，且后者也支持该 op，则尝试把 node 升上去  
-   典型例子就是多个 backend 共享 host buffer type 时，优先选优先级更高的 backend  
+### Tensor 到 backend 的映射
 
-4. pass4: 给剩余 src/view_src 补 backend  
-   view 一定跟随 `view_src`  
-   其它尚未分配的 src，一般继承当前 node 的 backend  
+scheduler 内部通过 tensor 指针哈希记录：
 
-5. pass5: 真正切 split，并创建 copy tensor  
-   - 当 backend 发生切换，或者当前 split 输入过多、权重 backend 不兼容时，开始一个新的 split  
-   - 如果 `src_backend_id != cur_backend_id` 且目标 backend 不能直接使用这个 src 的 buffer，则创建 `tensor_copy`
-   - `tensor_copy` 用 `ggml_dup_tensor_layout` 创建，只复制 layout，不复制数据本身
-   - 后续把 node 的 `src[j]` 改成这个 copy tensor  
+- `hv_tensor_backend_ids`：每个 tensor 当前分配到的 backend id。
+- `hv_tensor_copies`：每个 tensor 在不同 backend 和 copy slot 上的副本。
+- `node_backend_ids` / `leaf_backend_ids`：交给 gallocr 的逻辑 buffer id。
+- `prev_node_backend_ids` / `prev_leaf_backend_ids`：上一轮分配，用于判断物理 buffer 规划是否需要更新。
 
-切 split 完成后，scheduler 还会重建一份 `sched->graph`：  
-- 把 split 的输入 copy tensor 插到 graph 前面，确保 gallocr 分配时它们先被看到  
-- 再把原 graph 中属于该 split 的 node 依次放进去  
-- 最后把原 graph 的 leaf 补进去  
+应用可选地手动指定 tensor：
 
-因此 `sched->graph` 不是用户原始 graph，而是“已经插入 copy tensor、已经按 split 重组过的 graph”。  
+```c
+ggml_backend_sched_set_tensor_backend(
+    sched, tensor, cpu_backend);
 
-**6.4 ggml_backend_sched_reserve**  
-`sched_reserve` 做的是：  
-1. 先 `ggml_backend_sched_split_graph(sched, measure_graph)`  
-2. 同步所有 backend，避免上一轮异步执行仍在占用内存  
-3. 调 `ggml_gallocr_reserve_n(sched->galloc, &sched->graph, sched->node_backend_ids, sched->leaf_backend_ids)`  
-4. reserve 完后 reset scheduler，等待下一张真实 graph  
+ggml_backend_t assigned =
+    ggml_backend_sched_get_tensor_backend(sched, tensor);
+```
 
-所以 scheduler 的 reserve，本质上还是“先 split，再把 split 结果交给 gallocr 做多 buffer 规划”。  
+手动指定的 backend 必须属于当前 scheduler。修改 backend 指派或准备一张新 graph 前，必须先 reset scheduler。
 
-**6.5 ggml_backend_sched_alloc_graph**  
-执行前的分配过程：  
-1. `ggml_backend_sched_split_graph(sched, graph)`  
-2. `ggml_backend_sched_alloc_splits(sched)`  
+通常不需要逐个手动指定。scheduler 会综合以下信息自动决定：
 
-`ggml_backend_sched_alloc_splits` 内部会比较：
-- `node_backend_ids` vs `prev_node_backend_ids`
-- `leaf_backend_ids` vs `prev_leaf_backend_ids`  
+- backend 是否支持该 op。
+- backend 是否能直接访问 tensor 当前使用的 buft。
+- tensor 是否已经预分配。
+- source buffer 是否标记为 `GGML_BACKEND_BUFFER_USAGE_WEIGHTS`。
+- 用户手动指定的 backend。
+- backend 数组中的优先级。
 
-如果 backend/buft 发生变化，或者 `ggml_gallocr_alloc_graph` 失败，则：  
-- 先同步 backend
-- 再重新 `ggml_gallocr_reserve_n`
-- 然后重新 `ggml_gallocr_alloc_graph`  
+### Backend 分配的五个阶段
 
-这一步完成后，`sched->graph` 中所有 split tensor、copy tensor、原始 node tensor 都已经拿到了各自 backend buffer 内的地址。  
+`ggml_backend_sched_split_graph()` 大致通过五个阶段完成 node 分配和 graph 切分。
 
-**6.6 ggml_backend_sched_graph_compute**  
-最终计算通过 `ggml_backend_sched_compute_splits` 驱动：  
-1. 依次取出每个 split  
-2. 先处理 split 输入  
-   - 若输入来自别的 backend，先 copy 到当前 split backend 对应的 `tensor_copy`
-   - 用户输入 tensor 会优先同步后再立即拷贝，避免用户提前覆盖数据  
-3. 调 `ggml_backend_graph_compute_async(split_backend, &split->graph)` 执行当前子图  
-4. 若开启 pipeline parallel，则通过 `events[backend][copy]` 协调不同 copy 槽位的覆盖与复用  
-5. 全部 split 执行完成后，`cur_copy = (cur_copy + 1) % n_copies`  
+#### 第一阶段：根据已有位置确定初始 backend
 
-所以 scheduler 的运行时数据流可以概括为：  
-`原始 tensor -> 按 backend 归属切 split -> 必要时生成 tensor_copy -> gallocr 给 split 图分配地址 -> 每个 split 在自己的 backend 上执行`  
+scheduler 首先处理 leaf 和 node：
 
-**6.7 gallocr 与 sched 的关系**  
-1. `sched` 负责“逻辑切图”  
-   - 哪个 node 属于哪个 backend
-   - 哪些输入需要 copy
-   - split 图长什么样  
-2. `gallocr` 负责“物理布局”  
-   - 每个 split 图里的 tensor 放到哪个 buffer
-   - 在 buffer 里的 offset 是多少
-   - 哪些中间 tensor 可以复用同一段空间  
-  
-`sched` 解决“谁算、算哪一段、输入从哪来”；`gallocr` 解决“这段图里的 tensor 具体放到哪块内存”。  
+- 用户通过 `ggml_backend_sched_set_tensor_backend()` 设置的结果不会被覆盖。
+- 已有 backend buffer 的 tensor 优先放到能够直接访问该 buft、同时支持对应 op 的最高优先级 backend。
+- view 会参考 `view_src` 的 buffer 位置。
+- 带 `GGML_TENSOR_FLAG_INPUT` 的 graph input 默认分配给最后一个 backend，即强制要求存在的 CPU fallback。
+- 如果某个 source buffer 标记为 `WEIGHTS`，使用该权重的 op 会优先选择能直接使用这块 buffer 的 backend。
 
+如果 tensor 已经预分配，但 scheduler 中没有任何 backend 能使用其 buft 执行对应 op，当前实现会中止，而不是自动移动这个预分配 tensor。
 
-可参考：
-https://blog.rickyyel.org/blog/ggml-source-code-brief
+#### 第二阶段：向相邻 node 扩散已有分配
 
+scheduler 会沿 node 顺序向前和向后传播 backend 分配：
+
+1. 先传播除最后一个 CPU fallback 以外的已有分配。
+2. 只给该 backend 支持的 op 赋值。
+3. 再传播剩余 backend 的分配，填补仍未决定的相邻 node。
+
+这样可尽量让连续、兼容的 node 留在同一 backend，减少 split 和 tensor copy。
+
+在只有 CPU 的场景中，前两次“非 fallback backend”传播不会产生分配；后续阶段最终会把受支持的 node 分配给 CPU。
+
+#### 第三阶段：处理未分配 node 与优先级提升
+
+对于仍未分配的 node，scheduler 会遍历 backend：
+
+- 先要求 backend 支持当前 op。
+- 统计该 backend 能直接使用多少个 source。
+- 选择兼容 source 数量最多的 backend。
+- 数量相同时，较低索引的 backend 因遍历顺序获得优先级。
+
+对于已经分配的 node，如果更高优先级 backend 使用相同 buft、支持当前 op，并能使用所有 source，scheduler 可以将 node 提升到该 backend。
+
+#### 第四阶段：补齐 source 和 view 的 backend
+
+完成 node 分配后：
+
+- view 跟随 `view_src`。
+- 尚未分配的普通 source 通常继承使用它的当前 node 的 backend。
+- 最终进入 split 阶段前，所有参与计算的 node 和 source 都应有有效 backend id。
+
+#### 第五阶段：切分 split 并创建 copy tensor
+
+`ggml_backend_sched_split` 表示一段连续的 graph node，包含：
+
+- `backend_id`：负责执行该 split 的 backend。
+- `i_start` / `i_end`：原始 graph node 数组中的范围。
+- `inputs[]`：执行前需要复制到该 backend 的 tensor。
+- `graph`：通过 `ggml_graph_view()` 创建的原 graph 视图。
+
+以下情况会开始新的 split：
+
+- 当前 node 的 backend 与前一个 split 不同。
+- 当前 split 已经有跨 backend input，又遇到位于不兼容 buffer 上的权重。
+- 当前 split 的跨 backend input 数量达到上限，又出现新的不兼容 input。
+
+backend id 不同不一定需要复制。如果目标 backend 能直接访问 source 的 buft，原 tensor 可以直接使用。只有目标 backend 不能访问该 buffer 时，scheduler 才创建 copy tensor。
+
+copy tensor 由 `ggml_dup_tensor_layout()` 创建，只复制 type、shape 和 stride 等布局，不复制数据。实际数据在执行 split 前通过 backend copy 接口传输。
+
+创建 copy tensor 后，scheduler 会把相关 node 的 `src[j]` 改为当前 copy slot 对应的 tensor。因此 split 过程可能修改用户 graph 中 node 的 source 指针；reset 后不能继续把旧 graph 当作一张未分配的新 graph 使用。
+
+### 内部 allocation graph
+
+scheduler 还会构造一张内部 `sched->graph`，供 gallocr 规划内存。它与用户原始 graph 不完全相同：
+
+1. 对每个跨 backend input，加入一个依赖 view，防止 source 在 copy 完成前被 gallocr 回收。
+2. 加入 copy tensor，使其在 split 开始前获得目标 buffer 地址。
+3. 加入原 graph 中属于各 split 的 node。
+4. pipeline 模式下，将多个 copy slot 的输入副本加入 leaf。
+5. 最后加入原 graph 的 leaf。
+
+`split->graph` 是原 graph 某段 node 的 view；`sched->graph` 则是为了内存规划而添加了依赖和 copy tensor 的 graph。
+
+scheduler 负责决定“由谁执行、哪里需要复制”；gallocr 负责决定这些 tensor 在各 buft 对应 buffer 中的 offset。
+
+### Reserve 与 graph 分配
+
+`sched_reserve` 的流程是：
+
+```text
+measure graph
+    -> split_graph
+    -> synchronize all backends
+    -> ggml_gallocr_reserve_n
+    -> scheduler reset
+```
+
+调用方式：
+
+```c
+if (!ggml_backend_sched_reserve(sched, measure_graph)) {
+    // 处理计算 buffer 分配失败。
+}
+```
+
+reserve 是可选优化。measure graph 应代表最大 shape，以及实际 node 顺序、view、input/output 标志和 backend 分配。reserve 完成后 scheduler 会自动 reset，但 gallocr 已申请的物理 buffer 会保留。
+
+实际 graph 分配通过：
+
+```c
+if (!ggml_backend_sched_alloc_graph(sched, graph)) {
+    // 处理分配失败。
+}
+```
+
+其流程为：
+
+1. 再次对实际 graph 分配 backend 并切 split。
+2. 尝试使用 gallocr 已保存的规划绑定 tensor。
+3. 如果 node/leaf 对应的 buft 发生变化，或 gallocr 判断原规划不足，则先同步所有 backend。
+4. 调用 `ggml_gallocr_reserve_n()` 重新规划。
+5. 再次调用 `ggml_gallocr_alloc_graph()` 绑定 tensor。
+
+代码比较 backend id 时还会比较 buft。如果 backend id 变化但两个位置使用同一个 buft，不会仅因为 backend id 不同而强制重新规划物理 buffer。
+
+`ggml_backend_sched_get_buffer_size()` 返回某个 backend slot 对应的 gallocr buffer 大小。多个 slot 共用同一 buft 和实际 buffer 时，后续重复 slot 可能返回 0，以避免重复统计。
+
+### Graph 执行
+
+同步入口为：
+
+```c
+enum ggml_status status =
+    ggml_backend_sched_graph_compute(sched, graph);
+```
+
+它内部先调用异步入口，再同步 scheduler 中的所有 backend：
+
+```text
+graph_compute
+    -> graph_compute_async
+    -> synchronize all backends
+```
+
+`ggml_backend_sched_graph_compute_async()` 会：
+
+1. 在需要时自动调用 `ggml_backend_sched_alloc_graph()`。
+2. 依次处理各 split。
+3. 在 split 执行前传输不兼容的输入。
+4. 调用该 split backend 的 `ggml_backend_graph_compute_async()`。
+5. 轮换 pipeline copy slot。
+
+虽然接口名包含 async，但 CPU backend 的 graph compute 本身是同步实现。因此 CPU-only scheduler 中，每个 split 在提交调用返回前已经计算完成，显式 synchronize 是空操作。
+
+同一张已经分配的 graph 可以重复执行：
+
+```c
+for (int i = 0; i < n_runs; ++i) {
+    ggml_backend_tensor_set(
+        input, input_data[i], 0, ggml_nbytes(input));
+
+    enum ggml_status status =
+        ggml_backend_sched_graph_compute(sched, graph);
+}
+```
+
+重复执行时 scheduler 不会重新 split 或重新分配。传给 compute 的必须仍是已经分配的同一张 graph；若换成新 graph，必须先 reset。
+
+### 跨 backend copy
+
+对于 split input，scheduler 区分两种情况：
+
+- 用户 input：先确保目标 copy slot 不再使用，然后立即执行 copy，避免调用方过早改写输入数据。
+- graph 中间结果：等待目标 backend 可安全覆盖 copy slot，再尝试异步 copy；不支持时同步相关 backend，并回退到普通 tensor copy。
+
+这一机制是 scheduler 的通用行为。CPU-only 场景中所有 tensor 通常使用同一个 CPU buft，不需要创建跨 backend copy。
+
+### Pipeline copy slot
+
+`parallel=false` 时：
+
+```text
+n_copies = 1
+```
+
+`parallel=true` 时：
+
+```text
+n_copies = GGML_SCHED_MAX_COPIES = 4
+```
+
+scheduler 会为跨 backend input 创建多个副本，并尝试为每个 backend/copy slot 创建 event。执行完成后：
+
+```c
+cur_copy = (cur_copy + 1) % n_copies;
+```
+
+如果 device 不支持 event，event 指针为 `NULL`，scheduler 会回退到 backend synchronize。
+
+当前 CPU device 不支持异步操作和 event，CPU graph compute 也是同步执行。因此 CPU-only 场景启用 `parallel=true` 不会带来 pipeline overlap，反而会增加 copy tensor 和计算 buffer 占用，应使用 `parallel=false`。
+
+### Eval callback
+
+scheduler 可在执行 node 期间观察中间结果：
+
+```c
+ggml_backend_sched_set_eval_callback(
+    sched, callback, user_data);
+```
+
+callback 分为两个阶段：
+
+- `ask == true`：scheduler 询问是否需要观察当前 node。它可将连续且不需要观察的 node 合并为一个 graph view 一次执行。
+- `ask == false`：目标 node 已经执行完成并同步，callback 可以读取结果。
+
+启用 callback 会切小 split 的执行范围，并在观察节点前同步 backend，因此可能明显影响性能。
+
+公共头文件说明 callback 在第二阶段返回 false 可以取消 graph。但当前实现只跳出当前 split 的 node 遍历，没有返回取消状态，之后的 split 仍可能继续执行。这是当前版本的实现限制，不应依赖它完成可靠的全 graph 取消。
+
+### Reset 与 tensor 失效
+
+准备新 graph 或修改手动 backend 指派前必须调用：
+
+```c
+ggml_backend_sched_reset(sched);
+```
+
+reset 会：
+
+- 清空 tensor/backend 哈希关系。
+- 清空 copy tensor 映射。
+- 将 scheduler 标记为尚未分配 graph。
+- 保留 gallocr 已经申请的物理 buffer，以便后续 graph 复用容量。
+
+reset 不会把旧 graph tensor 的 `data` 清成 `NULL`，但这些地址在逻辑上已经失效。正确流程是：
+
+1. 确保上一轮执行已经同步完成。
+2. reset scheduler。
+3. 丢弃旧 graph 及其 tensor 元数据。
+4. 构建一张新的、尚未分配计算 tensor 的 graph。
+5. 重新调用 `alloc_graph()` 或让第一次 compute 自动分配。
+
+不能 reset 后继续使用旧 tensor，也不能直接把一张新 graph 传给仍处于 `is_alloc` 状态的 scheduler。
+
+### 单 CPU scheduler 的完整流程
+
+```c
+ggml_backend_t cpu_backend = ggml_backend_cpu_init();
+if (cpu_backend == NULL) {
+    // 处理初始化失败。
+}
+
+ggml_backend_t backends[] = {
+    cpu_backend,
+};
+
+ggml_backend_sched_t sched = ggml_backend_sched_new(
+    backends,
+    NULL,
+    1,
+    GGML_DEFAULT_GRAPH_SIZE,
+    false);
+
+// 可选：使用代表最大输入的 measure graph 提前 reserve。
+// ggml_backend_sched_reserve(sched, measure_graph);
+
+// 构建尚未分配计算 tensor 的实际 graph。
+struct ggml_cgraph * graph = build_graph(graph_ctx);
+
+if (!ggml_backend_sched_alloc_graph(sched, graph)) {
+    // 处理 graph buffer 分配失败。
+}
+
+// graph input 必须在 alloc_graph 之后写入。
+ggml_backend_tensor_set(
+    input, input_data, 0, ggml_nbytes(input));
+
+enum ggml_status status =
+    ggml_backend_sched_graph_compute(sched, graph);
+
+if (status == GGML_STATUS_SUCCESS) {
+    ggml_backend_tensor_get(
+        output, output_data, 0, ggml_nbytes(output));
+}
+
+// graph_compute 是同步入口；使用异步入口时需在这里显式同步。
+ggml_backend_sched_synchronize(sched);
+
+// reset 后旧 graph tensor 地址失效，随后丢弃元数据。
+ggml_backend_sched_reset(sched);
+ggml_free(graph_ctx);
+
+// scheduler 释放内部 gallocr 和计算 buffer，但不释放 CPU backend。
+ggml_backend_sched_free(sched);
+ggml_backend_free(cpu_backend);
+```
+
+调试 backend 分配和 split 时，可在创建 scheduler 前设置环境变量 `GGML_SCHED_DEBUG`。非零值打印 split 信息，较高值还会输出逐 node 的 backend 分配及原因。
 ## 如何判断是否掌握 GGML
 
 “能够运行示例”不等于掌握框架。示例可能隐藏了 graph 构建、buffer 所有权、内存规划和 scheduler 等关键细节。更可靠的判断标准是：能否独立解释执行链路、预测代码行为、定位故障并完成有边界的修改。
