@@ -420,165 +420,199 @@ ggml_build_forward_expand(graph, output);
 
 `include/ggml.h` 声明了 `ggml_graph_export()` 和 `ggml_graph_import()`，但当前仓库没有对应实现，构建出的 `libggml-base` 也不导出这两个符号，因此当前版本不应调用它们。
 
-## 4.ggml_backend
-ggml 后端大体可按下面的层次理解：
+## 后端抽象与 CPU 后端
 
-Backend Registry -> Device -> Backend  
-Backend Registry -> Device -> Buffer Type -> Buffer  
+`ggml-backend` 将“在哪里执行”和“数据存在哪里”抽象为两条相关但不同的路径：
 
-Backend Registry 管理多个 Backend Registration  
-每个 Registration 包含一个或多个 Device  
-Device 可初始化 Backend 实例  
-Device 提供 Buffer Type  
-Buffer Type 负责分配具体的 Buffer  
-
-以 cpu 后端为例  
-cpu后端注册属于顶层接口，cpu_reg.iface包含获取cpu设备attr查询（name 、count）以及获取cpu_device实例  
-cpu设备属于中间层。cpu_reg.device.iface包含device attr查询、后端初始化、获取Buffer Type  
-cpu后端属于底层，cpu_reg.device.iface.init_backend.iface包含图创建、执行、tensor计算同步等 backend 实例负责图执行、tensor 读写、同步等  
-cpu_reg -> cpu_device -> cpu_backend + cpu_backend_buffer_type_t  
-
-各实例关系:
-- cpu_reg 通过 iface.get_device 获取 cpu_device 实例；
-- cpu_device 包含 reg 字段指向 cpu_reg（设备归属于后端注册） 
-- cpu_device 通过 iface.init_backend 创建 cpu_backend 实例 
-- cpu_backend 包含 device 字段指向 cpu_device（后端实例归属于设备）
-- 双向引用, 下层结构通过指针反向引用上层，便于访问父级资源
-具体关系查看docs/ggml_backend.jpg docs/ggml_backend.png
-
-**4.0.1 ggml_backend_registry**   
-后端通过注册机制加入全局注册表ggml_backend_registry，由全局注册表统一管理，允许运行时动态加载后端，也支持静态注册。  
-
-获取注册表
-get_reg()函数，返回静态全局注册表对象  
-```
-static ggml_backend_registry & get_reg() {
-    static ggml_backend_registry reg;
-    return reg;
-}
+```text
+Backend Registry -> Device -> Backend
+                         \-> Buffer Type -> Buffer -> Tensor data
 ```
 
-枚举后端reg ggml_backend_reg_count、ggml_backend_reg_get  
-枚举dev     ggml_backend_dev_count、ggml_backend_dev_get 
+- `ggml_backend_reg_t`：一个后端实现的注册入口，负责报告名称、设备列表和扩展函数。
+- `ggml_backend_dev_t`：具体设备的能力与工厂接口，负责创建 backend、提供首选 buffer type，并判断算子和内存类型是否受支持。
+- `ggml_backend_t`：一次执行实例。它保存执行状态，用于创建或执行计算计划、提交 graph，以及在需要时同步。
+- `ggml_backend_buffer_type_t`（下文简称 `buft`）：一种内存的分配策略，描述名称、对齐、单 buffer 上限、tensor 实际占用大小以及是否为 host 内存。
+- `ggml_backend_buffer_t`：一次实际的内存分配，可承载多个 tensor，并实现该内存上的读、写、清零和释放。
 
-**4.0.2 动态加载**  
-通过 `ggml_backend_load` 加载单个后端动态库并注册,查找符号 ggml_backend_score（0 表示当前系统不支持该后端）和 ggml_backend_init，调用后者获取 ggml_backend_reg_t 并注册    
+这些类型在公共头文件中是不透明指针。应用应使用 `include/ggml-backend.h` 中的函数访问它们，不应依赖 `src/ggml-backend-impl.h` 中的内部字段。特别要注意，tensor 的同步读写属于 **buffer 接口**，不是 backend 的执行接口。
+
+### Registry、静态注册与动态加载
+
+进程内的全局 registry 分别保存 backend registration 和 device 列表：
+
+```c
+size_t n_reg = ggml_backend_reg_count();
+ggml_backend_reg_t reg = ggml_backend_reg_get(0);
+
+size_t n_dev = ggml_backend_dev_count();
+ggml_backend_dev_t dev = ggml_backend_dev_get(0);
+```
+
+编译进库的实现会在 registry 首次构造时静态注册。当前 CPU registration 名为 `"CPU"`，报告一个同名 CPU device。registry 保存的是注册对象和设备对象，不是可直接执行的 backend 实例；执行实例仍需由 device 创建。
+
+动态加载有两种入口：
+
+- `ggml_backend_load(path)` 直接加载指定动态库，检查可选的 `ggml_backend_score`，查找 `ggml_backend_init`，并校验 `GGML_BACKEND_API_VERSION` 后注册。
+- `ggml_backend_load_all[_from_path]()` 在搜索目录中为同名候选库调用 `ggml_backend_score`，选择得分最高者；没有带变体后缀的候选时，再尝试基础库名。
+
+加载成功后，registry 持有动态库句柄。当前实现还明确注明：若后端资源或线程仍在使用动态库，无法保证安全卸载，因此应用必须先销毁相关 backend、buffer 等资源。
+
+本章后续只讨论 CPU 的具体实现；上述注册机制是所有 backend 共用的基础设施。
+
+### CPU device 与 backend 实例
+
+CPU backend 可以直接创建，也可以经过通用 device 接口创建：
 
 ```c
 #include "ggml-backend.h"
-// 加载单个 so 后端
-ggml_backend_load(so_path);
-// 批量加载
-ggml_backend_load_all_from_path(folder_path);
-// 自动加载
-ggml_backend_load_all();
-```
+#include "ggml-cpu.h"
 
-ggml_backend_load_all自动对指定路径[./ , exec_path]中的libggml-{backend_name}-*.so评分，获取best backend，so保留dlopen句柄  
-
-其中动态库编译时需使用宏 GGML_BACKEND_DL_IMPL(backend_reg_fn) 导出 ggml_backend_init 符号   
-
-**4.0.3 静态注册**  
-各后端实现 `ggml_backend_*_reg()` 函数，返回静态 backend reg 对象。  
-注册表初始化时会收集后端、设备并加入容器。  
-
-注意：  
-- `backends` 容器里存的是 backend reg，而不是 backend 实例  
-- `devices` 容器里存的是 device 对象  
-- 实际执行用的 backend 仍然需要通过 `ggml_backend_dev_init()` 从 device 创建  
-
-**4.1 ggml_backend_device**  
-`ggml_backend_device` 连接后端注册表与实际执行 backend。对外通常通过接口函数访问，而不是直接依赖内部 struct 字段。  
-
-获取 device 的常见方式：
-```c
-// 1. 枚举获取
-size_t count = ggml_backend_dev_count();
-for (size_t i = 0; i < count; i++) {
-    ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-}
-
-// 2. 根据 backend_name 获取
-const char * backend_name = "CPU";
-ggml_backend_dev_t dev = ggml_backend_dev_by_name(backend_name);
-
-// 3. 根据 backend_type 获取
-ggml_backend_dev_t dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-
-// 4. 根据 backend_reg_t 获取
-size_t dev_count = ggml_backend_reg_dev_count(reg);
-for (size_t i = 0; i < dev_count; i++) {
-    ggml_backend_dev_t dev = ggml_backend_reg_dev_get(reg, i);
-}
-```
-
-
-**4.2 ggml_backend**  
-`ggml_backend` 是 GGML 中用于抽象不同硬件执行后端的核心接口。它和 device 的关系是：device 负责创建 backend，backend 负责实际执行。  
-
-**4.2.1 ggml_backend_cpu**  
-获取 cpu backend  
-```c
-// 方式1: 直接调用专用接口
-ggml_backend_t backend1 = ggml_backend_cpu_init();
-
-// 方式2: 获取 dev，根据 dev 初始化 backend
-const char * backend_name = "CPU";
-ggml_backend_dev_t dev_by_name = ggml_backend_dev_by_name(backend_name);
-ggml_backend_t backend2 = ggml_backend_dev_init(dev_by_name, nullptr);
-
-// 方式3: 先动态加载，再按类型获取
-ggml_backend_load_all();
-ggml_backend_dev_t dev_by_type = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-ggml_backend_t backend3 = ggml_backend_dev_init(dev_by_type, nullptr);
-```
-
-**4.3 ggml_backend_buffer_type**
-buffer_type = buffer 描述符（buffer descriptor） = 某类 backend 内存的分配策略/内存类型  
-它描述内存类型、对齐要求，以及 backend 上如何分配 buffer  
-
-每个 buffer type 通常提供这些能力：
-- `get_name`
-- `alloc_buffer`
-- `get_alignment`
-- `get_max_size`
-- `get_alloc_size`
-- `is_host`
-
-获取 buft，以 cpu 为例：
-```c
-// backend -> 默认 buft
-ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backend);
-```
-
-
-**4.4 ggml_backend_buffer**
-实际存放数据的 buffer。一个 buffer 可以承载多个 tensor。  
-
-常见接口包括：
-- `ggml_backend_buffer_get_base`
-- `ggml_backend_buffer_get_size`
-- `ggml_backend_buffer_get_type`
-- `ggml_backend_buffer_set_usage`
-
-根据 `ggml_ctx` 为其中 tensor 分配 backend buffer：
-```c
+// CPU 专用入口。
 ggml_backend_t backend = ggml_backend_cpu_init();
 
-struct ggml_init_params pdata = {
-    /*mem_size   =*/ mem_size,
-    /*mem_buffer =*/ nullptr,
-    /*no_alloc   =*/ true,
+// 等价的通用入口。
+ggml_backend_dev_t dev = ggml_backend_dev_by_name("CPU");
+ggml_backend_t backend_from_dev =
+    dev != NULL ? ggml_backend_dev_init(dev, NULL) : NULL;
+```
+
+CPU device 的职责包括：
+
+- 类型为 `GGML_BACKEND_DEVICE_TYPE_CPU`，名称为 `"CPU"`；description 尽量读取平台提供的 CPU 型号。
+- 返回默认的 CPU buffer type。
+- 从调用方提供的 host 指针创建 buffer。
+- 根据算子类型、输入数据类型和输入 buffer 类型实现 `supports_op`。
+- 接受 host buffer，以及编译配置可能提供的 CPU extra buffer type。
+
+不要把 device 的 memory 属性当成系统可用内存。当前 `ggml_backend_cpu_device_get_memory()` 尚未实现，`memory_free` 和 `memory_total` 均返回 0。
+
+一个 CPU backend 实例保存以下执行状态：线程数、可选的外部线程池、可复用的临时工作区，以及可选的终止回调。默认线程数为 `GGML_DEFAULT_N_THREADS`。它不拥有模型 tensor 的内存；tensor 数据由相应的 buffer 管理。
+
+### CPU buffer type、buffer 与 tensor 数据访问
+
+`ggml_backend_cpu_buffer_type()` 返回默认 CPU buft：
+
+- 名称为 `"CPU"`，属于 host 内存。
+- 使用 `ggml_aligned_malloc()` 分配，并按 `TENSOR_ALIGNMENT` 对齐。
+- 未覆盖 `get_max_size`，因此通用默认值为 `SIZE_MAX`。
+- 未覆盖 `get_alloc_size`，因此普通 tensor 的默认分配大小为 `ggml_nbytes(tensor)`。
+
+由它创建的 CPU buffer 拥有底层内存，释放 buffer 时会一并释放内存。`ggml_backend_cpu_buffer_from_ptr()` 则把已对齐的外部内存包装成名为 `"CPU_Mapped"` 的 buffer；该 buffer **不拥有指针**，调用方必须保证指针在 buffer 使用期间有效，并在合适的时机自行释放。
+
+同步数据访问直接分派到 tensor 所属的 buffer：
+
+```c
+ggml_backend_tensor_set(tensor, src, 0, ggml_nbytes(tensor));
+ggml_backend_tensor_get(tensor, dst, 0, ggml_nbytes(tensor));
+ggml_backend_tensor_memset(tensor, 0, 0, ggml_nbytes(tensor));
+```
+
+这些函数要求 tensor 已分配、`tensor->buffer` 有效且访问范围不越界。对于 view，代码使用其 `view_src` 的 buffer。CPU buffer 的对应实现最终是 `memcpy` 或 `memset`。
+
+`GGML_BACKEND_BUFFER_USAGE_WEIGHTS`、`COMPUTE` 和 `ANY` 是用途提示，不改变 buffer 的所有权。释放顺序仍由创建者负责。
+
+### 为 context 中的 tensor 分配 CPU buffer
+
+当 context 使用 `no_alloc = true` 创建 tensor 元数据时，可在 tensor 创建完毕后统一分配数据区：
+
+```c
+struct ggml_init_params params = {
+    .mem_size   = metadata_size,
+    .mem_buffer = NULL,
+    .no_alloc   = true,
 };
 
-struct ggml_context * ggml_ctx = ggml_init(pdata);
+struct ggml_context * ctx = ggml_init(params);
+// 在 ctx 中创建 tensor……
 
-// 为 context 中已有 tensor 统一分配 backend buffer
-// 1. get buftype + buftype.iface.alloc_buffer for all tensor
-// 2. combine all ggml_backend_buffer_t to one ggml_backend_buffer_t
-// 3. ggml_backend_buffer_t以及addr回流至tensor，并init tensor buf（if required)
-ggml_backend_buffer_t buffer = ggml_backend_alloc_ctx_tensors(ggml_ctx, backend);
+ggml_backend_buffer_t buffer =
+    ggml_backend_alloc_ctx_tensors(ctx, backend);
 ```
+
+该函数只处理尚未分配数据的 tensor，并使用 backend 的默认 buft。它按对齐和 `get_alloc_size` 计算空间，将 tensor 的 `data`、`buffer` 等字段绑定到实际分配。view 不单独占用数据区，而是由 `ggml_backend_view_init()` 连接到源 tensor。
+
+如果所有 tensor 能放进一个 buffer，函数直接返回该 buffer；只有累计大小超过 buft 的单 buffer 上限时，才分成多个真实 buffer，并返回一个 multi-buffer 包装。这个包装主要用于统一释放、清零和传播 usage，本身没有连续的 base 地址，也不实现普通 tensor 读写。
+
+返回的 buffer 拥有这批数据分配，必须在所有相关 tensor 不再使用后调用 `ggml_backend_buffer_free(buffer)`。更完整的生命周期复用和峰值内存规划由后面的 graph allocator 章节说明。
+
+### CPU graph 执行与 `ggml_cplan`
+
+CPU 的直接执行路径为：
+
+```text
+ggml_backend_graph_compute()
+        -> CPU backend graph_compute
+        -> ggml_graph_plan()
+        -> 准备或复用 work_data
+        -> ggml_graph_compute()
+```
+
+`ggml_graph_plan()` 遍历 graph 节点，为每个算子选择任务数，估算所有节点所需临时内存的最大值，并生成 `ggml_cplan`。plan 中的重要字段是：
+
+- `n_threads`：该 graph 实际使用的线程数，不超过调用方请求值和算子所需最大任务数。
+- `work_size` / `work_data`：算子执行所需的临时工作区，不是 tensor 的持久数据区。
+- `threadpool`：可选的可复用线程池。
+- `abort_callback` / `abort_callback_data`：计算期间的协作式终止检查。
+
+CPU backend 会按需扩充自身的 `work_data`，之后的 graph 计算可以复用该空间。它也实现了显式的 `ggml_backend_graph_plan_create/compute/free`；显式 plan 在创建时一次性分配工作区，适合重复执行结构不变的 graph。当前实现对 `ggml_cgraph` 只是浅拷贝，因此 plan 使用期间必须保证 graph 及其引用的 tensor 元数据仍然有效。
+
+CPU backend 是同步实现：异步 tensor 读写、event 和 `synchronize` 回调均为空。`ggml_backend_graph_compute()` 虽然采用通用的“提交后再同步”包装，但 CPU 的计算已在提交调用中完成，随后的 synchronize 是空操作。
+
+### 线程池、终止回调与 NUMA
+
+最简单的配置只需设置线程数：
+
+```c
+ggml_backend_cpu_set_n_threads(backend, n_threads);
+enum ggml_status status = ggml_backend_graph_compute(backend, graph);
+```
+
+未提供线程池时，每次底层 `ggml_graph_compute()` 都会创建并销毁一次临时线程池。重复推理可显式复用线程池：
+
+```c
+struct ggml_threadpool_params tpp =
+    ggml_threadpool_params_default(n_threads);
+ggml_threadpool_t threadpool = ggml_threadpool_new(&tpp);
+
+ggml_backend_cpu_set_threadpool(backend, threadpool);
+enum ggml_status status = ggml_backend_graph_compute(backend, graph);
+
+// 先解除 backend 对线程池的引用，再释放线程池。
+ggml_backend_cpu_set_threadpool(backend, NULL);
+ggml_threadpool_free(threadpool);
+```
+
+`ggml_threadpool_params` 还可配置 CPU mask、调度优先级、轮询强度、严格绑核以及初始暂停状态。调用方创建的线程池仍归调用方所有；`ggml_backend_free()` 不会替调用方释放它。
+
+`ggml_backend_cpu_set_abort_callback()` 可安装终止回调。回调返回 true 时，正在执行的 graph 会尽快以相应状态退出；这是协作式检查，不是立即强制终止线程。
+
+NUMA 主机可在开始计算前调用一次 `ggml_numa_init(strategy)`。`ggml_is_numa()` 表示初始化时是否检测到多个 NUMA node。NUMA 策略会影响线程亲和性和内存访问行为，应在创建工作线程及大规模分配前确定。
+
+### 最小 CPU 执行生命周期
+
+假设 graph 和 tensor buffer 已经构建、分配并填充，CPU 执行端的生命周期如下：
+
+```c
+ggml_backend_t backend = ggml_backend_cpu_init();
+if (backend == NULL) {
+    // 处理初始化失败。
+}
+
+ggml_backend_cpu_set_n_threads(backend, n_threads);
+
+enum ggml_status status = ggml_backend_graph_compute(backend, graph);
+if (status == GGML_STATUS_SUCCESS) {
+    ggml_backend_tensor_get(output, output_data, 0, ggml_nbytes(output));
+}
+
+// 先释放依赖 backend/buft 的 tensor buffer 和 context，最后释放 backend。
+ggml_backend_buffer_free(buffer);
+ggml_free(ctx);
+ggml_backend_free(backend);
+```
+
+若使用 scheduler，graph 的拆分、buffer 分配和执行提交由 scheduler 统一协调；不要再把 graph 直接提交给单个 backend。scheduler 的完整流程在后文单独说明。
 
 ## 5.ggml_gallocr
 gallocr（graph allocator）用于 graph 在不同后端上的张量内存管理。  
