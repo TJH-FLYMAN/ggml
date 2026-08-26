@@ -2,24 +2,38 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug gpt-2-sched",
+            "name": "GDB: Debug build/bin program",
             "type": "cppdbg",
             "request": "launch",
-            "program": "/home/jhtang3/ggml/ggml/build/bin/gpt-2-sched",// 指定调试文件目录
-            "args": [], // 需要的命令行参数
+            "program": "${workspaceFolder}/build/bin/${input:programName}",
+            "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",//设置工作目录
+            "cwd": "${workspaceFolder}",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "preLaunchTask": "CMake: build Debug",
             "setupCommands": [
                 {
-                    "description": "为 gdb 启用整齐打印",
+                    "description": "Load repository GDB settings",
+                    "text": "-interpreter-exec console \"source ${workspaceFolder}/gdb/ggml.gdb\"",
+                    "ignoreFailures": false
+                },
+                {
+                    "description": "Enable GDB pretty printing",
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
                 }
-            ],
-            "miDebuggerPath": "/usr/bin/gdb"  // 指定 GDB 的路径
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "programName",
+            "type": "promptString",
+            "description": "Executable name under build/bin",
+            "default": "simple-ctx"
         }
     ]
 }
