@@ -218,7 +218,49 @@ K 系列中没有 `Q7_K`。名字中的 2/3/4/5/6/8 描述主码设计，实际 
 
 ## 6. IQ 系列：查表与重要性感知量化
 
-本节将介绍 IQ 系列中的索引、符号与非线性码本。
+IQ 系列不是简单地给每个权重分配一个线性整数码。以 IQ2/IQ3 为例，量化器会把若干个权重视为一个小向量，在有限的 **grid/codebook（网格/码本）** 中选择最合适的候选向量，再结合符号与 scale 恢复近似值。因此 block 中常保存的是“选了码本中的哪一项”，而不是每个权重各自的完整整数码。
+
+“重要性感知”描述的是**量化时的拟合策略**，不是所有 IQ 结构体中都有一个同名字段。[`ggml-quants.h`](../src/ggml-quants.h) 将 IQ 量化接口归为使用 importance matrix（也称 Activation-aware Quantization）的量化；对应量化实现会用传入的 `imatrix`/`quant_weights` 调整误差权重，从而让更重要的权重在码本搜索与 scale 拟合中获得更高优先级。是否强制需要 importance matrix 由当前量化入口决定；反量化只读 block 和程序内置表，block 里没有通用的 `importance` 字段。
+
+九种 IQ block 也**没有统一的位布局或解码公式**。有的把 grid 索引、符号索引和小块 scale 塞进同一个 word，有的拆成 `qs`/`qh`/`signs`/`scales`，IQ4 则使用 16 值非线性码本。下表的字节数与 bpw 由结构体和其后的 `static_assert` 得到：
+
+| 结构 | 权重 | 字节 | 实际 bpw | 完整字段 | 直观角色 |
+| --- | ---: | ---: | ---: | --- | --- |
+| `block_iq1_s` | 256 | 50 | 1.5625 | `d`; `qs[32]`; `uint16_t qh[8]` | `qs` 保存 grid 索引低位；`qh` 混合索引高位、grid shift 方向和小块 scale |
+| `block_iq1_m` | 256 | 56 | 1.75 | `qs[32]`; `qh[16]`; `scales[8]` | 没有独立 `d`；`qs`/`qh` 组成 grid 索引与 shift，`scales` 同时打包小块 scale 和全局 FP16 scale 的 bits |
+| `block_iq2_xxs` | 256 | 66 | 2.0625 | `d`; `uint16_t qs[32]` | `qs` 是打包 word，混合 grid 索引、符号索引和局部 scale |
+| `block_iq2_xs` | 256 | 74 | 2.3125 | `d`; `uint16_t qs[32]`; `scales[8]` | `qs` 的 word 打包 grid/sign；`scales` 显式保存压缩的小块 scale |
+| `block_iq2_s` | 256 | 82 | 2.5625 | `d`; `qs[64]`; `qh[8]`; `scales[8]` | `qs` 内部分区保存 grid 索引低位与符号，`qh` 补 grid 高位，`scales` 保存小块 scale |
+| `block_iq3_xxs` | 256 | 98 | 3.0625 | `d`; `qs[96]` | 单一 byte 数组分区打包 grid 索引、符号索引和局部 scale |
+| `block_iq3_s` | 256 | 110 | 3.4375 | `d`; `qs[64]`; `qh[8]`; `signs[32]`; `scales[4]` | grid 索引低/高位、符号和小块 scale 分别存放 |
+| `block_iq4_nl` | 32 | 18 | 4.5 | `d`; `qs[16]` | 每个 nibble 选择 16 值非线性码本中的一项，再乘共享 `d` |
+| `block_iq4_xs` | 256 | 136 | 4.25 | `d`; `uint16_t scales_h`; `scales_l[4]`; `qs[128]` | `qs` 使用 IQ4_NL nibble 码；`scales_h`/`scales_l` 打包 8 个 32 权重小块的 scale |
+
+### IQ1：grid 索引、shift 与压缩 scale
+
+`block_iq1_s` 每 32 个权重使用 4 个 8 维 grid 向量。`qs[32]` 为每个向量保存 8-bit 索引低位；对应的 `qh[ib]` 中，低 12 bit 依次保存 4 个索引的 3-bit 高位，bit 12–14 保存 3-bit 小块 scale，bit 15 选择在 grid 元素上加还是减 `IQ1S_DELTA`。这里的最高位是整个 32 权重小块的 grid shift 方向，不是“每个权重一个 sign bit”。FP16 `d` 再与小块 scale 组合。
+
+`block_iq1_m` 进一步把全局 scale 也压进 `scales[8]`，所以结构体中看不到独立 `d`。反量化器把 `scales` 视为 4 个 `uint16_t`：每个 word 的低 12 bit 分成四组 3-bit 小块 scale，4 个 word 的高 nibble 则被拼回一个 FP16 全局 scale。`qs` 保存索引低 8 bit，`qh` 的每个 byte 为两个 8 维 grid 向量各保存 3 个索引高位和 1 个 shift bit。它与 IQ1_S 共享 IQ1 grid 思路，但位布局和 scale 恢复步骤不同。
+
+`iq1m_scale_t` 是 IQ1_M 解码辅助联合体：`u16` 和 `f16` 是**同一个 16-bit 存储的两种视图**。解码器先通过 `u16` 写入从 `scales` 拼出的 bits，再通过 `f16` 把这些 bits 解释为 half。它不是 block，不计入上表的九种结构；联合体也不会让 `block_iq1_m` 额外保存 2 byte。
+
+### IQ2/IQ3：同一家族也有不同打包法
+
+IQ2_XXS 以 32 权重为一个解码单元：其 64 bit 载荷的前 32 bit 可看成 4 个 8-bit grid 索引，后 32 bit 打包 4 个 7-bit 符号索引与 4-bit 局部 scale。`block_iq2_xxs.qs` 声明为 `uint16_t[32]`，但解码器会按 32/8-bit 视图拆这些 packed words。这里只需要先建立“索引 + 符号 + scale”的总体印象；第 7 节再按 32/8 个值逐层走读。
+
+IQ2_XS 的每个 `uint16_t qs` 直接分为 9-bit grid 索引和 7-bit 符号索引，`scales[8]` 中每 byte 再保存两个 4-bit scale。IQ2_S 则将 10-bit grid 索引拆成 `qs` 的 8-bit 低位和 `qh` 的 2-bit 高位；`qs[64]` 的前半区域是索引低位，后半区域是直接的 8-bit 符号掩码，`scales` 另存。三者即使都属于 IQ2，也不能共用同一个位级解码式。
+
+IQ3_XXS 把 64 byte grid 索引和 32 byte 的符号/局部 scale 区域放进同一个 `qs[96]`。IQ3_S 则把这些角色显式拆开：`qs` 存 grid 索引的低 8 bit，`qh` 补每个索引的第 9 bit，`signs` 是符号掩码，`scales` 的每个 nibble 缩放一组 32 权重。源码中 `block_iq3_s` 是 110 byte，因此实际是 `110 * 8 / 256 = 3.4375 bpw`。
+
+### IQ4：非线性 16 值码本
+
+`block_iq4_nl` 的一个 4-bit nibble 不是线性的 `0..15` 整数幅值，而是 `kvalues_iq4nl[16]` 的索引。当前表值从 `-127` 到 `113` 不等距分布，解码关系是 `x_hat = d * kvalues_iq4nl[code]`。`qs[16]` 每 byte 放两个 nibble，覆盖 32 个权重。
+
+`block_iq4_xs` 复用同样的 IQ4_NL nibble code，但把 256 个权重分成 8 个 32 权重小块。每个小块的 6-bit scale 由 `scales_l` 中的低 4 bit 和 `scales_h` 中的高 2 bit 拼成，再减 32 还原成带符号小块 scale；它与全局 FP16 `d` 组合后去缩放非线性码本值。
+
+### 后缀不是跨格式的质量等级
+
+`XXS`/`XS`/`S` 首先是**同一数字家族内**的相对存储档，通常有 `XXS < XS < S`：例如 IQ2 依次为 2.0625、2.3125、2.5625 bpw，更大的档会用更多索引、符号或 scale bits。`M` 是另一种打包布局，`NL` 描述非线性码本；不应把它们硬塞入一条通用尺度。这些后缀不能跨 IQ1/IQ2/IQ3/IQ4 直接比较，也不能保证在任意模型、importance matrix 和硬件上的质量或速度排名。
 
 ## 7. 三个位级示例
 
@@ -230,7 +272,26 @@ K 系列中没有 `Q7_K`。名字中的 2/3/4/5/6/8 描述主码设计，实际 
 
 ## 9. 文件后半部分的大型表是什么
 
-本节将说明 IQ 解码查找表的作用。
+`ggml-common.h` 后半部分的大量常量是 IQ 的码本和解码辅助表。这个头文件会被 host C/C++ 和多种 GPU 后端共用，而各种语言对“常量数组”的声明语法不同。包含方在引入头文件前选择一个 `GGML_COMMON_IMPL_*` 宏，头文件再定义相应的 `GGML_TABLE_BEGIN(type, name, size)` 和 `GGML_TABLE_END()`：
+
+| 选择宏 | 常量的主要声明形式 |
+| --- | --- |
+| `GGML_COMMON_IMPL_C` | host C 的 `static const`，并引入 `<stdint.h>` |
+| `GGML_COMMON_IMPL_CPP` | host C++ 的 `static const`，并引入 `<cstdint>` |
+| `GGML_COMMON_IMPL_METAL` | Metal 的 `static const constant` |
+| `GGML_COMMON_IMPL_CUDA` / `GGML_COMMON_IMPL_HIP` / `GGML_COMMON_IMPL_MUSA` | 设备端 `static const __device__` |
+| `GGML_COMMON_IMPL_SYCL` | SYCL 分支使用 `static const` |
+
+某个分支被选中后，内部标记 `GGML_COMMON_IMPL` 会打开数据表区域。因而后面每个表只需写一次类似 `GGML_TABLE_BEGIN(uint8_t, name, size) ... GGML_TABLE_END()` 的中性形式，宏就会把它展开成当前编译目标合法的常量。这让 CPU、Metal、CUDA/HIP/MUSA 与 SYCL 内核能使用同一份数值源，避免多份表各自漂移。
+
+几类代表表格的作用如下：
+
+- `kmask_iq2xs` 是 `1, 2, 4, ... 128` 八个 bit mask，用来检查 8 维向量中某个元素是否要翻转符号。
+- `ksigns_iq2xs` 将压缩的 7-bit 符号索引展开为 8-bit 符号组合；`ksigns64` 则把对应组合展开成八个 byte 的 `0x00`/`0xff` 形式，便于向量化内核使用。
+- `iq2xxs_grid`、`iq2xs_grid`、`iq2s_grid`、`iq3xxs_grid`、`iq3s_grid` 以及 `iq1s_grid`/`iq1s_grid_gpu` 是不同 IQ 布局使用的码本向量。数组元素会把多个小整数打包进 `uint32_t` 或 `uint64_t`；block 中的 grid index 选中其中一项，解码器再把它视为短向量。
+- IQ4 的同类解码资产叫 `kvalues_iq4nl`，它是 16 个非线性 `int8_t` 值。要注意：在当前源码中，该表是 [`ggml-quants.c`](../src/ggml-quants.c) 内的文件局部 `static const`，而不是 `ggml-common.h` 里的 `GGML_TABLE_BEGIN/END` 表。
+
+这些表是**实现/解码资产**，不是每个量化 block 都重复携带的 metadata。计算 `sizeof(block)` 和 bpw 时只统计结构体字段，不能把整张码本摊到每个 block 里重复加一次。阅读时理解“索引找向量、符号表展开符号”就足够建立整体模型，不需要逐项背诵上千行常量。
 
 ## 10. 推荐的源码阅读顺序
 
