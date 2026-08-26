@@ -264,7 +264,219 @@ IQ3_XXS 把 64 byte grid 索引和 32 byte 的符号/局部 scale 区域放进�
 
 ## 7. 三个位级示例
 
-本节将逐字节拆解 `Q4_0`、`Q4_K` 和 `IQ2_XXS`。
+本节将逐字节拆解 `Q4_0`、`Q4_K` 和 `IQ2_XXS`。三个例子都按“布局 → 取位 → 恢复公式 → 容量”的顺序阅读。
+
+### 7.1 `Q4_0`：一个 byte 服务两个相隔 16 位的权重
+
+#### 布局
+
+一个 `block_q4_0` 保存 32 个权重，总共 18 byte：
+
+| byte offset | 大小 | 内容 |
+| --- | ---: | --- |
+| `0..1` | 2 byte | FP16 缩放因子 `d` |
+| `2..17` | 16 byte | `qs[0..15]`，每个 byte 放两个 4-bit code |
+
+```text
+offset 0..1             offset 2........................17
++------------------+    +---------------------------------+
+| d (FP16, 2 byte) |    | qs[0] | qs[1] | ... | qs[15]   |
++------------------+    +---------------------------------+
+```
+
+#### 取位
+
+对 `j = 0..15`，`qs[j]` 并不是保存逻辑上相邻的第 `2j` 和 `2j+1` 个权重。它的低 nibble 对应权重 `j`，高 nibble 对应权重 `j+16`：
+
+```c
+q0 = qs[j] & 0x0f;  // weight[j]
+q1 = qs[j] >> 4;    // weight[j + 16]
+```
+
+例如 `qs[0] = 0xE6 = 1110 0110₂`，因此权重 0 的 code 是 `6`，权重 16 的 code 是 `14`。
+
+#### 恢复公式
+
+4-bit code `q` 的范围是 `0..15`，先减去固定零点 8，再乘以 `d`：
+
+```text
+x_hat = d * (q - 8)
+```
+
+纯解码示意：设 `d = 0.5`、`qs[0] = 0xE6`，则
+
+```text
+weight[0]  = 0.5 * ( 6 - 8) = -1
+weight[16] = 0.5 * (14 - 8) =  3
+```
+
+`quantize_row_q4_0_ref` 有一个反直觉的细节：它找到绝对值最大的元素后，保留该元素的符号为 `max`，再计算 `d = max / -8`。所以 `d` 可能为负数；解码公式仍然是 `d * (q - 8)`。上述 `d = 0.5` 和 `0xE6` 只用于演示如何解码，不表示 reference quantizer 必然会为某组输入生成这组字节。
+
+#### 容量
+
+```text
+(2 + 16) * 8 / 32 = 4.5 bpw
+```
+
+名字里的“4”只描述每个 code 的 4 bit；均摊 FP16 `d` 后，实际是 4.5 bpw。
+
+### 7.2 `Q4_K`：全局因子与子块仿射参数
+
+#### 布局
+
+`block_q4_K` 把 256 个权重分成 8 个 32 权重子块，总共 144 byte：
+
+| byte offset | 大小 | 内容 |
+| --- | ---: | --- |
+| `0..3` | 4 byte | 联合体的 `d`/`dmin` 视图：两个 FP16 全局因子（也可作 `dm` 视图） |
+| `4..15` | 12 byte | `scales[12]`，打包 8 个 6-bit `sc` 和 8 个 6-bit `m` |
+| `16..143` | 128 byte | `qs[128]`，保存 256 个 4-bit code |
+
+`scales` 的位数正好对上：`8 * 6 + 8 * 6 = 96 bit = 12 byte`。但这 12 byte **不是**“8 个 scale 后跟 8 个 min”的连续数组，它们的 bits 被重组到一起。
+
+#### 取位：`scales[12]`
+
+令 `S` 表示 `scales`。`get_scale_min_k4(j, S, &sc, &m)` 按如下规则恢复第 `j` 个子块的两个 6-bit code：
+
+```text
+j < 4:
+    sc_j = S[j]     & 0x3f
+    m_j  = S[j + 4] & 0x3f
+
+j >= 4:
+    sc_j = (S[j + 4] & 0x0f) | ((S[j - 4] >> 6) << 4)
+    m_j  = (S[j + 4] >> 4)   | ((S[j]     >> 6) << 4)
+```
+
+用 `j=2` 和 `j=6` 可以看清两条路径如何共享 byte（左边是高位）：
+
+```text
+S[2]  = [ sc_6 bits 5..4 ][ sc_2 bits 5..0 ]
+S[6]  = [  m_6 bits 5..4 ][  m_2 bits 5..0 ]
+S[10] = [  m_6 bits 3..0 ][ sc_6 bits 3..0 ]
+           byte bits 7..4    byte bits 3..0
+```
+
+- 对 `j=2`，直接取 `S[2]` 和 `S[6]` 的低 6 bit，得到 `sc_2` 和 `m_2`。
+- 对 `j=6`，`sc_6` 的高 2 bit 来自 `S[2]`、低 4 bit 来自 `S[10]` 的低 nibble；`m_6` 的高 2 bit 来自 `S[6]`、低 4 bit 来自 `S[10]` 的高 nibble。
+
+#### 取位：`qs[128]`
+
+`qs` 每 32 byte 覆盖一组 64 个逻辑权重。对组号 `g = 0..3` 和组内 byte `l = 0..31`：
+
+```text
+q_low  = qs[32*g + l] & 0x0f  -> weight[64*g + l]
+q_high = qs[32*g + l] >> 4    -> weight[64*g + 32 + l]
+```
+
+因此同一 byte 的两个 nibble 分属两个不同的 32 权重子块，它们不是逻辑上相邻的权重。
+
+#### 恢复公式
+
+对子块 `j`，先把 6-bit code 与全局因子组合：
+
+```text
+sub_d = d    * sc
+sub_m = dmin * m
+x_hat = sub_d * q - sub_m
+      = (d * sc) * q - (dmin * m)
+```
+
+纯公式演示（不是某个真实 model block 的 metadata）：
+
+```text
+d = 0.1, dmin = 0.05, sc = 10, m = 4, q = 7
+x_hat = (0.1 * 10) * 7 - (0.05 * 4) = 6.8
+```
+
+这里 `dmin * m` 是被减去，不是加上。
+
+#### 容量
+
+```text
+144 * 8 / 256 = 4.5 bpw
+```
+
+`Q4_K` 虽然也是 4.5 bpw，但 metadata 比 `Q4_0` 分得更细：两个全局因子之下还有 8 组子块 `sc/m`。
+
+### 7.3 `IQ2_XXS`：索引码本，而不是直接保存 2-bit 整数
+
+#### 布局
+
+一个 `block_iq2_xxs` 保存 256 个权重，总共 66 byte：
+
+| byte offset | 大小 | 内容 |
+| --- | ---: | --- |
+| `0..1` | 2 byte | FP16 全局因子 `d` |
+| `2..65` | 64 byte | `uint16_t qs[32]` 的 packed 载荷 |
+
+256 个权重被分成 8 组，每组 32 个权重消耗 8 byte。解码器用 `memcpy` 把每组的 4 个 `uint16_t` 读成两个 `uint32_t` word：
+
+```text
+word0 (32 bit): 4 个 8-bit grid index
+word1 (32 bit): 4 个 7-bit sign index + 1 个 4-bit local-scale code
+```
+
+`qs` 声明成 `uint16_t[32]` 是存储/对齐视图。它的语义是按 byte 和 32-bit word 打包后解码，**不是 32 个相互独立的 16-bit quant**。
+
+#### 取位
+
+`word0` 的 4 个 byte 分别是 `grid_index[0..3]`。每个索引进入 `iq2xxs_grid`，选出一组 8 个幅值；4 个索引刚好覆盖 32 个权重。
+
+`word1` 的 bits 划分如下：
+
+```text
+bits  0.. 6 : sign_index[0]
+bits  7..13 : sign_index[1]
+bits 14..20 : sign_index[2]
+bits 21..27 : sign_index[3]
+bits 28..31 : local_scale_code
+```
+
+对第 `l` 组 8 个值，源码等价于：
+
+```text
+grid       = iq2xxs_grid[grid_index[l]]
+sign_mask  = ksigns_iq2xs[sign_index[l]]
+sign(j)    = -1, if sign_mask & kmask_iq2xs[j]
+             +1, otherwise
+```
+
+`ksigns_iq2xs` 把 7-bit 索引展开为一个 8-bit 符号掩码，`kmask_iq2xs = {1, 2, 4, ..., 128}` 再检查这 8 个位置中的每一位。
+
+#### 恢复公式
+
+一组 32 个权重共享一个 4-bit 局部 scale code：
+
+```text
+db    = d * (0.5 + local_scale_code) * 0.25
+x_hat = db * grid_value * sign
+```
+
+下面是一个与当前表值一致的小型解码示意，仍然不代表真实模型块：设 `d=0.5`、`word0=0`、`word1=0`。此时 4 个 grid index 都是 0，而 `iq2xxs_grid[0]` 的 8 个 byte 都是 8；4 个 sign index 也都是 0，`ksigns_iq2xs[0]=0`，所以全部符号为正。局部 scale code 为 0，因而：
+
+```text
+db = 0.5 * (0.5 + 0) * 0.25 = 0.0625
+x_hat = 0.0625 * 8 * (+1) = 0.5
+```
+
+该示意中 32 个恢复值都是 `+0.5`。
+
+#### 容量
+
+```text
+66 * 8 / 256 = 2.0625 bpw
+```
+
+`IQ2_XXS` 的额外 `0.0625 bpw` 来自均摊到 256 个权重上的 2-byte FP16 `d`。“2”并不意味着每个权重都能被当作一个独立的 2-bit 整数解码。
+
+### 7.4 三者对比
+
+| 格式 | 值的核心表示 | metadata 层级 | 解码直觉 |
+| --- | --- | --- | --- |
+| `Q4_0` | 4-bit 线性 code | 整个 32 权重块共享一个 `d` | 单一线性 scale 与固定零点 8 |
+| `Q4_K` | 4-bit 非负 code | 全局 `d/dmin` + 8 组子块 `sc/m` | 分层仿射 metadata，每个子块都有 scale 和被减去的 min |
+| `IQ2_XXS` | grid 索引 + 符号索引 | 全局 `d` + 每 32 值的局部 scale | 通过码本、sign 和局部 scale 共同恢复 |
 
 ## 8. 全部结构体容量速查
 
