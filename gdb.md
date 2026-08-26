@@ -1,0 +1,293 @@
+# GDB 调试指南
+
+本指南说明如何在 `/home/jhtang3/ggml/ggml` 中使用 GDB 调试 `build/bin` 下的程序。除非特别说明，所有命令都在仓库根目录执行。
+
+## 环境准备
+
+确认 GDB、CMake 和 VS Code C/C++ 扩展已经安装：
+
+```bash
+gdb --version
+cmake --version
+code --list-extensions | grep '^ms-vscode.cpptools$'
+```
+
+使用 Debug 模式配置并编译项目：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+```
+
+Debug 构建会保留源码行号和变量信息。可以检查某个程序是否包含调试信息：
+
+```bash
+file build/bin/simple-ctx
+```
+
+输出中应包含 `with debug_info` 和 `not stripped`。
+
+## 命令行调试
+
+### 查看可调试程序
+
+```bash
+./scripts/gdb-bin --help
+```
+
+脚本会列出 `build/bin` 下当前可执行的程序。调用时只传程序名，不要传 `build/bin/` 路径：
+
+```bash
+# 正确
+./scripts/gdb-bin simple-ctx
+
+# 错误：脚本不接受路径
+./scripts/gdb-bin build/bin/simple-ctx
+```
+
+### 启动无参数程序
+
+```bash
+./scripts/gdb-bin simple-ctx
+```
+
+看到 `(gdb)` 提示符后，可以设置断点并运行：
+
+```gdb
+break main
+run
+```
+
+### 传递程序参数
+
+程序名后面的内容都会传给被调试程序：
+
+```bash
+./scripts/gdb-bin gpt-2-sched \
+    -m models/gpt-2-117M/ggml-model-gpt-2-117M.bin \
+    -p "Hello from ggml" \
+    -n 8
+```
+
+其中 `-m`、`-p` 和 `-n` 是 `gpt-2-sched` 的参数，不是 GDB 参数。启动后可以在 GDB 中检查：
+
+```gdb
+break main
+run
+print argc
+print argv[1]
+```
+
+### 一次完整的调试流程
+
+先启动示例：
+
+```bash
+./scripts/gdb-bin simple-ctx
+```
+
+然后依次输入：
+
+```gdb
+# 在执行 compute(model) 前停下
+break examples/simple/simple-ctx.cpp:101
+
+# 启动程序
+run
+
+# 查看附近源码和当前调用栈
+list
+backtrace
+
+# 查看已经初始化的上下文
+print model.ctx
+
+# 单步越过 compute(model)
+next
+
+# 查看返回的 tensor 指针
+print result
+
+# 继续运行到程序结束
+continue
+
+# 退出 GDB
+quit
+```
+
+需要源码界面时，可以启用 GDB TUI：
+
+```gdb
+layout src
+```
+
+按 `Ctrl-x a` 可退出或重新进入 TUI。
+
+## VS Code 调试
+
+仓库已经提供 `.vscode/launch.json` 和 `.vscode/tasks.json`。
+
+1. 用 VS Code 打开 `/home/jhtang3/ggml/ggml`。
+2. 打开左侧“运行和调试”面板。
+3. 选择 `GDB: Debug build/bin program`。
+4. 在源码行号左侧单击以设置断点。
+5. 按 `F5`。
+6. 输入 `build/bin` 下的程序名，例如 `simple-ctx` 或 `gpt-2-sched`。
+
+启动前，VS Code 会依次执行 `CMake: configure Debug` 和 `CMake: build Debug`，完成 Debug 配置及增量编译。
+
+### 在 VS Code 中传递参数
+
+编辑 `.vscode/launch.json` 中的 `args` 数组。每个参数必须是单独的数组元素：
+
+```json
+"args": [
+    "-m",
+    "models/gpt-2-117M/ggml-model-gpt-2-117M.bin",
+    "-p",
+    "Hello from ggml",
+    "-n",
+    "8"
+]
+```
+
+调试不需要参数的程序时保持：
+
+```json
+"args": []
+```
+
+### VS Code 调试操作
+
+- `F5`：继续运行。
+- `F10`：单步跳过，不进入函数。
+- `F11`：单步进入函数。
+- `Shift-F11`：跳出当前函数。
+- `Shift-F5`：停止调试。
+- 在“变量”“监视”“调用堆栈”和“断点”面板中检查运行状态。
+
+## 常用 GDB 命令
+
+| 命令 | 简写 | 作用 |
+| --- | --- | --- |
+| `help <command>` |  | 查看命令帮助 |
+| `break main` | `b main` | 在函数入口设置断点 |
+| `break file.cpp:100` | `b file.cpp:100` | 在源码行设置断点 |
+| `info breakpoints` | `i b` | 查看所有断点 |
+| `delete 1` | `d 1` | 删除编号为 1 的断点 |
+| `disable 1` / `enable 1` |  | 禁用或启用断点 |
+| `run` | `r` | 从头启动程序 |
+| `continue` | `c` | 继续运行到下一个断点 |
+| `next` | `n` | 执行下一行，不进入函数 |
+| `step` | `s` | 执行下一行，进入函数 |
+| `finish` |  | 运行到当前函数返回 |
+| `list` | `l` | 显示当前源码附近内容 |
+| `print variable` | `p variable` | 打印变量或表达式 |
+| `print/x variable` | `p/x variable` | 以十六进制打印 |
+| `ptype variable` |  | 查看变量类型 |
+| `info locals` | `i locals` | 查看当前栈帧的局部变量 |
+| `info args` | `i args` | 查看当前函数参数 |
+| `backtrace` | `bt` | 查看调用栈 |
+| `frame 2` | `f 2` | 切换到编号为 2 的栈帧 |
+| `watch variable` |  | 变量被写入时暂停 |
+| `info threads` | `i threads` | 查看线程列表 |
+| `thread 2` | `t 2` | 切换到编号为 2 的线程 |
+| `quit` | `q` | 退出 GDB |
+
+查看指针指向的内存：
+
+```gdb
+# 从 ptr 开始显示 16 个十六进制字节
+x/16xb ptr
+
+# 从 ptr 开始显示 8 个 float
+x/8fw ptr
+```
+
+## 当前配置文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `scripts/gdb-bin` | 校验程序名，从仓库根目录启动 GDB，并转发程序参数 |
+| `gdb/ggml.gdb` | 设置漂亮打印、待定断点、Intel 汇编格式和源码显示选项 |
+| `.vscode/launch.json` | 定义通用 `cppdbg` 启动项和程序名输入框 |
+| `.vscode/tasks.json` | 定义 CMake Debug 配置及增量构建任务 |
+
+命令行脚本会自动加载 `gdb/ggml.gdb`，不需要修改用户级 `~/.gdbinit`。
+
+## 常见问题
+
+### 提示程序不存在
+
+先查看实际程序名：
+
+```bash
+./scripts/gdb-bin --help
+```
+
+如果列表中没有目标程序，重新编译：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+```
+
+传给脚本的第一个参数必须是 `simple-ctx` 这种文件名，不能是完整路径。
+
+### GDB 提示没有调试符号
+
+检查程序：
+
+```bash
+file build/bin/simple-ctx
+```
+
+如果没有 `with debug_info`，删除或更换旧构建目录后重新执行 Debug 配置：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+```
+
+还可以在 GDB 中确认当前加载的文件：
+
+```gdb
+info files
+```
+
+### 断点没有命中
+
+确认源码文件名、行号或函数名正确：
+
+```gdb
+info breakpoints
+info sources
+info functions main
+```
+
+如果源码已经修改，先重新编译再启动调试。`gdb/ggml.gdb` 已启用 pending breakpoint，因此共享库尚未加载时设置的有效函数断点会在加载后生效。
+
+### VS Code 无法启动 `cppdbg`
+
+确认 Microsoft C/C++ 扩展和 GDB 可用：
+
+```bash
+code --list-extensions | grep '^ms-vscode.cpptools$'
+/usr/bin/gdb --version
+```
+
+如果第一条命令没有输出，请在 VS Code 扩展面板安装 Microsoft C/C++ 扩展。仓库配置默认使用 `/usr/bin/gdb`。
+
+### VS Code 中程序参数不正确
+
+检查 `.vscode/launch.json` 的 `args`。不要把多个参数写在同一个字符串中。例如：
+
+```json
+// 正确
+"args": ["-p", "Hello ggml", "-n", "8"]
+
+// 错误：会被当成一个参数
+"args": ["-p Hello ggml -n 8"]
+```
+
+所有相对路径都以仓库根目录为基准，因为命令行脚本和 VS Code 都把工作目录设置为 `/home/jhtang3/ggml/ggml`。
