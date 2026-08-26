@@ -25,7 +25,7 @@ Run:
 sed -n '1,420p' src/ggml-common.h | rg -o '^} block_[A-Za-z0-9_]+' | sort -u
 ```
 
-Expected: 24 unique `block_*` declarations, from `block_iq1_m` through `block_tq2_0`.
+Expected: 23 unique `block_*` declarations, from `block_iq1_m` through `block_tq2_0`.
 
 **Step 2: Create the document outline**
 
@@ -278,7 +278,7 @@ Add a short comparison: Q4_0 uses one linear scale, Q4_K uses hierarchical affin
 
 **Step 1: Add the consolidated structure table**
 
-Combine all 24 structures into one table with family, block elements, bytes, actual bpw, metadata, packed values, and role. Keep it consistent with the per-family tables rather than introducing new facts.
+Combine all 23 structures into one table with family, block elements, bytes, actual bpw, metadata, packed values, and role. Keep it consistent with the per-family tables rather than introducing new facts.
 
 **Step 2: Add the source reading route**
 
@@ -307,13 +307,13 @@ Run:
 
 ```bash
 cc -DGGML_COMMON_DECL_C -x c -fsyntax-only src/ggml-common.h
-test "$(sed -n '1,420p' src/ggml-common.h | rg -o '^} block_[A-Za-z0-9_]+' | wc -l)" -eq 24
+test "$(sed -n '1,420p' src/ggml-common.h | rg -o '^} block_[A-Za-z0-9_]+' | wc -l)" -eq 23
 comm -23 \
   <(sed -n '1,420p' src/ggml-common.h | rg -o 'block_[A-Za-z0-9_]+' | sort -u) \
   <(rg -o 'block_[A-Za-z0-9_]+' docs/ggml量化类型与数据结构.md | sort -u)
 ```
 
-Expected: compiler exit 0, count is 24, and `comm` prints nothing.
+Expected: compiler exit 0, count is 23, and `comm` prints nothing.
 
 **Step 5: Verify arithmetic and Markdown hygiene**
 

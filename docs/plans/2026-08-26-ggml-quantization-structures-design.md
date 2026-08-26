@@ -10,7 +10,7 @@
 
 - 新增 `docs/ggml量化类型与数据结构.md`。
 - 不修改根目录 `README.md`，也不修改任何源码。
-- 覆盖 `ggml-common.h` 中全部 24 个 `block_*` 量化结构和
+- 覆盖 `ggml-common.h` 中全部 23 个 `block_*` 量化结构和
   `iq1m_scale_t` 联合体。
 - 解释文件后半部分 IQ 解码表的角色，但不逐项展开大型常量表。
 - 不深入各 CPU/GPU 后端的优化内核，也不对不同模型和硬件上的质量、速度作绝对排名。
@@ -47,7 +47,7 @@
 
 ## 验证
 
-- 检查全部 24 个 `block_*` 名称和 `iq1m_scale_t` 均出现在文档中。
+- 检查全部 23 个 `block_*` 名称和 `iq1m_scale_t` 均出现在文档中。
 - 复核所有结构体字节数和 bpw。
 - 对照 `ggml-common.h` 与 `ggml-quants.c` 检查字段含义和三个示例的位序。
 - 运行 Markdown 格式检查（若仓库有可用工具）和 `git diff --check`。
