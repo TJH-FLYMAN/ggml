@@ -150,7 +150,71 @@ TQ（ternary quantization）不是用完整的 1 bit 或 2 bit 整数范围去�
 
 ## 5. K 系列：256 个权重组成的超块
 
-本节将按格式讲解超块和小块元数据。
+K 系列的 `K` 不是又一个位数，而是一组 **super-block（超块）** 格式。`QK_K = 256` 表示一个超块覆盖 256 个权重；`Q2_K`、`Q3_K` 和 `Q6_K` 再把它分成 16 个、每个 16 权重的小块，`Q4_K` 和 `Q5_K` 则分成 8 个、每个 32 权重的小块。
+
+如果每个小块都直接保存浮点 scale/min，元数据会占用不小空间。K 系列的关键思路是：小块的 scale，以及某些格式的 min，也先量化成小整数；超块再用 FP16 `d`/`dmin` 把它们恢复成小块参数。这样能将超块级浮点元数据分摊给 256 个权重。但各格式的小块大小、主码位平面和 `scales` 打包方式不同，不能用一套位布局一式套用。
+
+对有小块 scale/min 的格式，可以先用以下概念式理解两级缩放：
+
+```text
+sub_scale = d    * quantized_scale
+sub_min   = dmin * quantized_min
+x_hat     = sub_scale * q - sub_min       # 带 min 的 Q2_K/Q4_K/Q5_K
+x_hat     = sub_scale * q                  # 只有 scale 的 Q3_K/Q6_K
+```
+
+这只是解码关系，不是通用的字节布局。带 min 的三种格式使用无符号 `q`；无 min 的 `Q3_K`/`Q6_K` 使用有符号 `q`，且偏移和位序必须按各自格式解读。`Q8_K` 更特殊：它没有小块 scale，而是直接用一个 FP32 `d` 缩放 256 个 `int8_t` 码。
+
+| 结构 | 权重 | 小块划分 | 字节 | 实际 bpw | 字段构成 |
+| --- | ---: | --- | ---: | ---: | --- |
+| `block_q2_K` | 256 | 16 × 16 | 84 | 2.625 | `scales[16]` + `qs[64]` + FP16 `d`/`dmin`（或 `dm`） |
+| `block_q3_K` | 256 | 16 × 16 | 110 | 3.4375 | `hmask[32]` + `qs[64]` + `scales[12]` + FP16 `d` |
+| `block_q4_K` | 256 | 8 × 32 | 144 | 4.5 | FP16 `d`/`dmin`（或 `dm`）+ `scales[12]` + `qs[128]` |
+| `block_q5_K` | 256 | 8 × 32 | 176 | 5.5 | FP16 `d`/`dmin`（或 `dm`）+ `scales[12]` + `qh[32]` + `qs[128]` |
+| `block_q6_K` | 256 | 16 × 16 | 210 | 6.5625 | `ql[128]` + `qh[64]` + `scales[16]` + FP16 `d` |
+| `block_q8_K` | 256 | 16 组 × 16 的求和 | 292 | 9.125 | FP32 `d` + `int8_t qs[256]` + `int16_t bsums[16]` |
+
+### `block_q2_K`：2-bit 主码，4-bit scale/min
+
+`scales[16]` 一个 byte 对应一个 16 权重小块：低 4 bit 是该小块的 `quantized_scale`，高 4 bit 是 `quantized_min`。`qs[64]` 为每个权重提供 2-bit 无符号码 `q in [0, 3]`；每个 byte 容纳四个 2-bit 位平面。参考实现以 128 个权重为一组，同一 byte 中的四个码分别来自间隔 32 的位置，并不是四个相邻权重。
+
+FP16 `d` 缩放低 nibble，FP16 `dmin` 缩放高 nibble，因而每个小块按 `x_hat = d * sc * q - dmin * m` 解码。结构大小是 `16 + 64 + 2 + 2 = 84` 字节。
+
+### `block_q3_K`：2-bit 低位 + 独立高位平面
+
+`qs[64]` 按与 Q2_K 同类的位平面顺序保存每个 3-bit 码的低 2 bit，`hmask[32]` 保存第 3 bit。`hmask` 是一个 32-byte 位平面：第一组 32 个码使用每个 byte 的 bit 0，下一组使用 bit 1，依次到 bit 7。解码时，高位为 1 就直接使用低两位，高位为 0 则减 4，得到有符号 `q in [-4, 3]`。因此这一位在实际恢复中同时承担高位/符号分组作用，不能把它当作普通二进制补码的符号位。
+
+`scales[12]` 把 16 个 6-bit scale 压入 96 bit；解码器重组为 `0..63` 后减 32，得到 `quantized_scale in [-32, 31]`。每个 16 权重小块使用 `x_hat = d * quantized_scale * q`。结构大小为 `32 + 64 + 12 + 2 = 110` 字节。
+
+### `block_q4_K`：4-bit 主码 + 6-bit scale/min
+
+FP16 `d`/`dmin` 是超块参数。`scales[12]` 用刚好 96 bit 打包 8 组 `(6-bit scale, 6-bit min)`：前四组主要使用前 8 个 byte 的低 6 bit，后四组的低 4 bit 在后 4 个 byte 的两个 nibble 中，其高 2 bit 分散在前面 byte 的高位。`get_scale_min_k4` 就是负责把第 `j` 组 scale/min 重组回两个 `0..63` 整数。
+
+`qs[128]` 每 byte 放两个 4-bit 无符号码。低 nibble 和高 nibble 分别对应同一个 64 权重分组中的前、后 32 个码，每 32 个码使用各自的小块 scale/min，按 `x_hat = d * sc * q - dmin * m` 解码。结构大小为 `4 + 12 + 128 = 144` 字节。
+
+### `block_q5_K`：Q4_K 元数据 + 第 5 位平面
+
+`d`/`dmin` 和 `scales[12]` 的含义、打包方式与 Q4_K 相同，也通过 `get_scale_min_k4` 重组 8 组 6-bit scale/min。`qs[128]` 保存每个码的低 4 bit，`qh[32]` 保存第 5 bit 平面；重组后得到无符号 `q in [0, 31]`。`qh` 的一个 byte 会随 64 权重分组通过不同 bit 被重用，因此不是“一权重对应一个 `qh` byte”。
+
+每个 32 权重小块同样按 `x_hat = d * sc * q - dmin * m` 解码。结构大小是 `4 + 12 + 32 + 128 = 176` 字节。
+
+### `block_q6_K`：4-bit 低位 + 2-bit 高位
+
+`ql[128]` 保存 6-bit 码的低 4 bit，`qh[64]` 保存高 2 bit。打包以 128 个权重为一组：一个 `qh` byte 分别给四个间隔 32 的码提供 2 bit。高低位重组为 `0..63` 后减 32，得到有符号 `q in [-32, 31]`。
+
+`scales[16]` 不再是压缩位流，而是每个 16 权重小块一个有符号 `int8_t` scale。FP16 `d` 是超块 scale，不使用 min，解码式为 `x_hat = d * scales[subblock] * q`。结构大小是 `128 + 64 + 16 + 2 = 210` 字节。
+
+### `block_q8_K`：点积用的中间量化块
+
+源码注释明确说明，`block_q8_K` **只用于中间量化和点积**。它的 `d` 是 4-byte `float`，不是 FP16；`qs[256]` 直接保存 256 个有符号 `int8_t` 码，单个值按 `x_hat = d * qs[i]` 恢复。`bsums[16]` 中的每个 `int16_t` 是对应连续 16 个 `qs` 的和，供点积内核避免重复求和；它不是额外的权重码。结构大小是 `4 + 256 + 16 * 2 = 292` 字节。
+
+### 联合体、`scales` 与实际 bpw
+
+`block_q2_K`、`block_q4_K` 和 `block_q5_K` 中的联合体有两种访问视图：一种将其读为两个 FP16 字段 `d`/`dmin`，另一种将同样的 4 byte 读为 `ggml_half2 dm`。它们共享内存，计算结构大小时只能计 4 byte，不能把 `dm` 再加一次。
+
+`scales` 也不是跨格式的统一位流：Q2_K 每 byte 分成两个 4-bit 值，Q3_K 把 16 个带偏置的 6-bit scale 压成 12 byte，Q4_K/Q5_K 把 8 对 6-bit scale/min 交错打包，Q6_K 则直接使用 `int8_t scales[16]`。读写时必须使用对应格式的解码逻辑。
+
+K 系列中没有 `Q7_K`。名字中的 2/3/4/5/6/8 描述主码设计，实际 bpw 还包含超块 scale、小块 `scales`、min、高位平面或 `bsums` 等元数据。例如 `Q4_K` 是 4.5 bpw，`Q8_K` 是 9.125 bpw，不能直接把类型名数字当成物理存储成本。
 
 ## 6. IQ 系列：查表与重要性感知量化
 
