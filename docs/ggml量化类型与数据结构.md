@@ -550,7 +550,9 @@ x_hat = 0.0625 * 8 * (+1) = 0.5
 1. 先看 [`src/ggml-common.h`](../src/ggml-common.h) 中的 `block_*` 声明、`QK*` 长度和紧跟的 `static_assert`。这一层回答“一个 block 占多少 byte、有哪些字段”，不直接回答如何取位或优化。
 2. 再看 [`src/ggml-quants.h`](../src/ggml-quants.h) 中对外公开的 reference quantization 和 dequantization API，先建立“浮点行 ↔ 量化 block”的函数对应关系。
 3. 在 [`src/ggml-quants.c`](../src/ggml-quants.c) 选一对 `quantize_row_*_ref` / `dequantize_row_*` 对照阅读。先读 `Q4_0` 熟悉 block 循环、nibble 和 scale，再读 `Q4_K` 的两级 metadata，最后进入 IQ 的 grid/sign/scale 查表解码。
-4. 回到 [`src/ggml.c`](../src/ggml.c) 的 type traits，核对每个 `ggml_type` 的 block size、type size、reference 转换函数和 vector-dot 配对；然后再到 [`src/ggml-cpu/`](../src/ggml-cpu/)、[`src/ggml-cuda/`](../src/ggml-cuda/)、[`src/ggml-metal/`](../src/ggml-metal/) 等后端阅读 CPU/GPU 优化内核。后端是否有某个特化实现，以当前 checkout 为准。
+4. 回到 [`src/ggml.c`](../src/ggml.c) 的核心 `type_traits`，核对每个 `ggml_type` 的 `blck_size`、`type_size`、`to_float` 和 `from_float_ref` 等尺寸与 reference 转换信息。
+5. 再看 [`src/ggml-cpu/ggml-cpu.c`](../src/ggml-cpu/ggml-cpu.c) 的 `type_traits_cpu`，核对 CPU 使用的 `from_float`、`vec_dot` 和 `vec_dot_type` 配对。这里才是查看某种量化格式在 CPU 点积时与哪个中间类型配对的直接入口。
+6. 最后到 [`src/ggml-cuda/`](../src/ggml-cuda/)、[`src/ggml-metal/`](../src/ggml-metal/) 等其他后端阅读特化内核。后端是否有某个特化实现，以当前 checkout 为准。
 
 这条路线中要始终区分三层：`ggml-common.h` 定义的是**存储布局**，`ggml-quants.c` 的 reference 函数展示的是**基准格式转换**，CPU/GPU 后端的 vector-dot 和专用内核实现的是**运行时优化计算**。三者关联同一格式，却不是同一层源码。
 
