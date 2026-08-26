@@ -39,6 +39,7 @@ int main () {
     // nb[2] = sizeif(fp32) * ne[0] * ne[1] = nb[1] * ne[1]  =  2560 * 640 = 1638400    channel +1的对应位置
     // nb[3] = sizeif(fp32) * ne[0] * ne[1] * ne[2] = nb[2] * ne[2] = 1,638,400 * 3 = 4915200  batch + 1的对应位置
     // nb[i] = nb[i-1] * ne[i]
+    printf("pytorch shape NCHW(1,3,640,640) fp32\n");
     print_tensor_info(img_tensor, "Image Tensor");  
     
     
