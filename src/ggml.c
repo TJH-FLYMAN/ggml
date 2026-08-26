@@ -5714,7 +5714,6 @@ static void ggml_compute_backward(
 static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor * node) {
     // check if already visited 
     if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
-        printf( "altread insert %s \n",node->name);
         return;
     }
     // default: left to right
@@ -5724,7 +5723,6 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
             (cgraph->order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) :
             /* unknown order, just fall back to using i*/ i;
         if (node->src[k]) { 
-            printf( "cur node %s , parent node, %s \n",node->name,node->src[k]->name);
             ggml_visit_parents(cgraph, node->src[k]); // 递归
         }
     }
@@ -5736,7 +5734,6 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "leaf_%d", cgraph->n_leafs);
         }
-        printf( "leaf %s \n",node->name);
         cgraph->leafs[cgraph->n_leafs] = node;
         cgraph->n_leafs++;
     } else {
@@ -5745,7 +5742,6 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
         if (strlen(node->name) == 0) {
             ggml_format_name(node, "node_%d", cgraph->n_nodes);
         }
-        printf( "node %s \n",node->name);
         cgraph->nodes[cgraph->n_nodes] = node;
         cgraph->n_nodes++;
     }
