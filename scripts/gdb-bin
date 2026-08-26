@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/.." && pwd)"
+bin_dir="$repo_root/build/bin"
+gdb_commands="$repo_root/gdb/ggml.gdb"
+
+usage() {
+    printf 'Usage: %s <program-name> [program-arguments...]\n' "${0##*/}"
+}
+
+list_programs() {
+    printf 'Available programs:\n'
+    if [[ -d "$bin_dir" ]]; then
+        find "$bin_dir" -maxdepth 1 -type f -perm -111 -printf '  %f\n' | sort
+    fi
+}
+
+if [[ $# -eq 0 ]]; then
+    usage >&2
+    list_programs >&2
+    exit 2
+fi
+
+case "$1" in
+    -h|--help)
+        usage
+        list_programs
+        exit 0
+        ;;
+    */*)
+        printf 'error: program must be a name from build/bin, not a path: %s\n' "$1" >&2
+        exit 2
+        ;;
+esac
+
+program="$1"
+shift
+target="$bin_dir/$program"
+
+if [[ ! -e "$target" ]]; then
+    printf 'error: program %s not found under %s\n' "$program" "$bin_dir" >&2
+    list_programs >&2
+    exit 2
+fi
+
+if [[ ! -f "$target" || ! -x "$target" ]]; then
+    printf 'error: target is not an executable file: %s\n' "$target" >&2
+    exit 2
+fi
+
+gdb_bin="${GDB:-/usr/bin/gdb}"
+if [[ ! -x "$gdb_bin" ]]; then
+    printf 'error: GDB is not executable: %s\n' "$gdb_bin" >&2
+    exit 2
+fi
+
+cd "$repo_root"
+exec "$gdb_bin" -x "$gdb_commands" --args "$target" "$@"
