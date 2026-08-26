@@ -176,7 +176,7 @@ x_hat     = sub_scale * q                  # 只有 scale 的 Q3_K/Q6_K
 
 ### `block_q2_K`：2-bit 主码，4-bit scale/min
 
-`scales[16]` 一个 byte 对应一个 16 权重小块：低 4 bit 是该小块的 `quantized_scale`，高 4 bit 是 `quantized_min`。`qs[64]` 为每个权重提供 2-bit 无符号码 `q in [0, 3]`；每个 byte 容纳四个 2-bit 位平面。参考实现以 128 个权重为一组，同一 byte 中的四个码分别来自间隔 32 的位置，并不是四个相邻权重。
+`scales[16]` 一个 byte 对应一个 16 权重小块：低 4 bit 是该小块的 `quantized_scale`，高 4 bit 是 `quantized_min`。`qs[64]` 为每个权重提供 2-bit 无符号码 `q in [0, 3]`；每个 byte 容纳四个 2-bit 字段/码槽。参考实现以 128 个权重为一组，同一 byte 中的四个码分别来自间隔 32 的位置，并不是四个相邻权重。
 
 FP16 `d` 缩放低 nibble，FP16 `dmin` 缩放高 nibble，因而每个小块按 `x_hat = d * sc * q - dmin * m` 解码。结构大小是 `16 + 64 + 2 + 2 = 84` 字节。
 
@@ -240,7 +240,7 @@ IQ 系列不是简单地给每个权重分配一个线性整数码。以 IQ2/IQ3
 
 `block_iq1_s` 每 32 个权重使用 4 个 8 维 grid 向量。`qs[32]` 为每个向量保存 8-bit 索引低位；对应的 `qh[ib]` 中，低 12 bit 依次保存 4 个索引的 3-bit 高位，bit 12–14 保存 3-bit 小块 scale，bit 15 选择在 grid 元素上加还是减 `IQ1S_DELTA`。这里的最高位是整个 32 权重小块的 grid shift 方向，不是“每个权重一个 sign bit”。FP16 `d` 再与小块 scale 组合。
 
-`block_iq1_m` 进一步把全局 scale 也压进 `scales[8]`，所以结构体中看不到独立 `d`。反量化器把 `scales` 视为 4 个 `uint16_t`：每个 word 的低 12 bit 分成四组 3-bit 小块 scale，4 个 word 的高 nibble 则被拼回一个 FP16 全局 scale。`qs` 保存索引低 8 bit，`qh` 的每个 byte 为两个 8 维 grid 向量各保存 3 个索引高位和 1 个 shift bit。它与 IQ1_S 共享 IQ1 grid 思路，但位布局和 scale 恢复步骤不同。
+`block_iq1_m` 进一步把全局 scale 也压进 `scales[8]`，所以结构体中看不到独立 `d`。反量化器把 `scales` 视为 4 个 `uint16_t`：每个 word 的低 12 bit 分成四组 3-bit 小块 scale，4 个 word 的高 nibble 则被拼回一个 FP16 全局 scale。每个 3-bit scale code 缩放两个连续的 8 维 grid，即 16 个权重；实际乘数是奇数 `2 * code + 1`。`qs` 保存索引低 8 bit，`qh` 的每个 byte 为两个 8 维 grid 向量各保存 3 个索引高位和 1 个 shift bit。它与 IQ1_S 共享 IQ1 grid 思路，但位布局和 scale 恢复步骤不同。
 
 `iq1m_scale_t` 是 IQ1_M 解码辅助联合体：`u16` 和 `f16` 是**同一个 16-bit 存储的两种视图**。解码器先通过 `u16` 写入从 `scales` 拼出的 bits，再通过 `f16` 把这些 bits 解释为 half。它不是 block，不计入上表的九种结构；联合体也不会让 `block_iq1_m` 额外保存 2 byte。
 
@@ -492,7 +492,33 @@ x_hat = 0.0625 * 8 * (+1) = 0.5
 
 ## 8. 全部结构体容量速查
 
-本节将汇总各 block 的权重数、字节数和 bpw。
+下表汇总 `ggml-common.h` 当前声明的全部 23 种 `block_*` 结构。“实际 bpw”统一按 `结构体字节数 * 8 / block 权重数` 计算，因此已经包含 block 内的 scale、min、sign、index 和辅助和等字段；程序全局共享的 IQ lookup table 不会随 block 重复存储，不计入 bpw。
+
+| 家族 | 结构 | block 权重 | 字节 | 实际 bpw | metadata | 打包值 | 角色/备注 |
+| --- | --- | ---: | ---: | ---: | --- | --- | --- |
+| 经典 Q | `block_q4_0` | 32 | 18 | 4.5 | FP16 `d` | `qs[16]`：32 个 nibble | 固定零点 8 的对称式 Q4 |
+| 经典 Q | `block_q4_1` | 32 | 20 | 5.0 | FP16 `d`/`m`（或共享视图 `dm`） | `qs[16]`：32 个 nibble | 带 minimum 的仿射 Q4 |
+| 经典 Q | `block_q5_0` | 32 | 22 | 5.5 | FP16 `d` | `qh[4]` 第 5 位 + `qs[16]` 低 4 位 | 固定零点 16 的对称式 Q5 |
+| 经典 Q | `block_q5_1` | 32 | 24 | 6.0 | FP16 `d`/`m`（或共享视图 `dm`） | `qh[4]` 第 5 位 + `qs[16]` 低 4 位 | 带 minimum 的仿射 Q5 |
+| 经典 Q | `block_q8_0` | 32 | 34 | 8.5 | FP16 `d` | `int8_t qs[32]` | 直接保存有符号 8-bit 码 |
+| 经典 Q | `block_q8_1` | 32 | 36 | 9.0 | FP16 `d`/`s`（或共享视图 `ds`） | `int8_t qs[32]` | `s = d * sum(qs)`，用于点积辅助 |
+| TQ | `block_tq1_0` | 256 | 54 | 1.6875 | FP16 `d` | `qs[48]` 每 byte 5 个 trit；`qh[4]` 存尾部 16 个 trit | 三值 `{-d, 0, +d}` 的 base-3 打包 |
+| TQ | `block_tq2_0` | 256 | 66 | 2.0625 | FP16 `d` | `qs[64]`：每 byte 四个 2-bit 码槽 | 三值 `{-d, 0, +d}`；code 3 未用 |
+| K | `block_q2_K` | 256 | 84 | 2.625 | FP16 `d`/`dmin`（或 `dm`）+ `scales[16]` | `qs[64]`：2-bit 无符号码 | 16 × 16 小块，scale/min 各 4 bit |
+| K | `block_q3_K` | 256 | 110 | 3.4375 | FP16 `d` + `scales[12]` | `hmask[32]` 高位 + `qs[64]` 低 2 位 | 16 × 16 小块，6-bit 带偏置 scale |
+| K | `block_q4_K` | 256 | 144 | 4.5 | FP16 `d`/`dmin`（或 `dm`）+ `scales[12]` | `qs[128]`：4-bit 无符号码 | 8 × 32 小块，6-bit scale/min |
+| K | `block_q5_K` | 256 | 176 | 5.5 | FP16 `d`/`dmin`（或 `dm`）+ `scales[12]` | `qh[32]` 第 5 位 + `qs[128]` 低 4 位 | Q4_K metadata 加第 5 位平面 |
+| K | `block_q6_K` | 256 | 210 | 6.5625 | FP16 `d` + `int8_t scales[16]` | `ql[128]` 低 4 位 + `qh[64]` 高 2 位 | 16 × 16 小块的有符号 6-bit 码 |
+| K | `block_q8_K` | 256 | 292 | 9.125 | FP32 `d` + `int16_t bsums[16]` | `int8_t qs[256]` | 仅用于中间量化和点积 |
+| IQ | `block_iq1_s` | 256 | 50 | 1.5625 | FP16 `d`；`qh[8]` 也打包小块 scale/shift | `qs[32]` 索引低位 + `qh[8]` 索引高位 | 每 32 权重使用四个 8 维 IQ1 grid |
+| IQ | `block_iq1_m` | 256 | 56 | 1.75 | `scales[8]` 打包全局 FP16 bits 与 3-bit 小块 scale；`qh[16]` 也存 shift | `qs[32]` 索引低位 + `qh[16]` 索引高位 | 无独立 `d`；每 scale code 管 16 个权重 |
+| IQ | `block_iq2_xxs` | 256 | 66 | 2.0625 | FP16 `d`；`qs` word 也打包局部 scale | `uint16_t qs[32]`：grid/sign 索引 | 每 32 权重一个 64-bit 混合载荷 |
+| IQ | `block_iq2_xs` | 256 | 74 | 2.3125 | FP16 `d` + `scales[8]` | `uint16_t qs[32]`：9-bit grid + 7-bit sign 索引 | 显式 nibble 小块 scale |
+| IQ | `block_iq2_s` | 256 | 82 | 2.5625 | FP16 `d` + `scales[8]` | `qs[64]` 索引低位/sign + `qh[8]` 索引高位 | 拆分 10-bit grid 索引与 sign |
+| IQ | `block_iq3_xxs` | 256 | 98 | 3.0625 | FP16 `d`；`qs` 尾部也打包局部 scale | `qs[96]`：grid/sign 索引与 scale 的分区载荷 | grid、sign 与 scale 同置单一 byte 数组 |
+| IQ | `block_iq3_s` | 256 | 110 | 3.4375 | FP16 `d` + `scales[4]` | `qs[64]` 索引低位 + `qh[8]` 高位 + `signs[32]` | grid、sign、scale 显式分区 |
+| IQ | `block_iq4_nl` | 32 | 18 | 4.5 | FP16 `d` | `qs[16]`：32 个非线性码本 nibble 索引 | 使用 16 值 `kvalues_iq4nl` |
+| IQ | `block_iq4_xs` | 256 | 136 | 4.25 | FP16 `d` + `scales_h` + `scales_l[4]` | `qs[128]`：256 个 IQ4_NL nibble 索引 | 8 × 32 小块，每块 6-bit scale |
 
 ## 9. 文件后半部分的大型表是什么
 
@@ -512,15 +538,33 @@ x_hat = 0.0625 * 8 * (+1) = 0.5
 
 - `kmask_iq2xs` 是 `1, 2, 4, ... 128` 八个 bit mask，用来检查 8 维向量中某个元素是否要翻转符号。
 - `ksigns_iq2xs` 将压缩的 7-bit 符号索引展开为 8-bit 符号组合；`ksigns64` 则把对应组合展开成八个 byte 的 `0x00`/`0xff` 形式，便于向量化内核使用。
-- `iq2xxs_grid`、`iq2xs_grid`、`iq2s_grid`、`iq3xxs_grid`、`iq3s_grid` 以及 `iq1s_grid`/`iq1s_grid_gpu` 是不同 IQ 布局使用的码本向量。数组元素会把多个小整数打包进 `uint32_t` 或 `uint64_t`；block 中的 grid index 选中其中一项，解码器再把它视为短向量。
+- `iq2xxs_grid`、`iq2xs_grid`、`iq2s_grid`、`iq3xxs_grid`、`iq3s_grid` 以及 IQ1 的 grid 表是不同 IQ 布局使用的码本向量。IQ1 的 host-C 分支用 `uint64_t iq1s_grid`，其他实现分支用 `uint32_t iq1s_grid_gpu`：两者表达等价的 IQ1 grid 数值概念，但不是同一种原始数组元素表示。这项实现差异不改变 `block_iq1_s`/`block_iq1_m` 的布局；block 中的 grid index 只负责选中对应的概念向量。
 - IQ4 的同类解码资产叫 `kvalues_iq4nl`，它是 16 个非线性 `int8_t` 值。要注意：在当前源码中，该表是 [`ggml-quants.c`](../src/ggml-quants.c) 内的文件局部 `static const`，而不是 `ggml-common.h` 里的 `GGML_TABLE_BEGIN/END` 表。
 
 这些表是**实现/解码资产**，不是每个量化 block 都重复携带的 metadata。计算 `sizeof(block)` 和 bpw 时只统计结构体字段，不能把整张码本摊到每个 block 里重复加一次。阅读时理解“索引找向量、符号表展开符号”就足够建立整体模型，不需要逐项背诵上千行常量。
 
 ## 10. 推荐的源码阅读顺序
 
-本节将给出从存储布局到量化和点积实现的阅读路线。
+建议按下列顺序从“格式是什么”走到“运行时怎么算”：
+
+1. 先看 [`src/ggml-common.h`](../src/ggml-common.h) 中的 `block_*` 声明、`QK*` 长度和紧跟的 `static_assert`。这一层回答“一个 block 占多少 byte、有哪些字段”，不直接回答如何取位或优化。
+2. 再看 [`src/ggml-quants.h`](../src/ggml-quants.h) 中对外公开的 reference quantization 和 dequantization API，先建立“浮点行 ↔ 量化 block”的函数对应关系。
+3. 在 [`src/ggml-quants.c`](../src/ggml-quants.c) 选一对 `quantize_row_*_ref` / `dequantize_row_*` 对照阅读。先读 `Q4_0` 熟悉 block 循环、nibble 和 scale，再读 `Q4_K` 的两级 metadata，最后进入 IQ 的 grid/sign/scale 查表解码。
+4. 回到 [`src/ggml.c`](../src/ggml.c) 的 type traits，核对每个 `ggml_type` 的 block size、type size、reference 转换函数和 vector-dot 配对；然后再到 [`src/ggml-cpu/`](../src/ggml-cpu/)、[`src/ggml-cuda/`](../src/ggml-cuda/)、[`src/ggml-metal/`](../src/ggml-metal/) 等后端阅读 CPU/GPU 优化内核。后端是否有某个特化实现，以当前 checkout 为准。
+
+这条路线中要始终区分三层：`ggml-common.h` 定义的是**存储布局**，`ggml-quants.c` 的 reference 函数展示的是**基准格式转换**，CPU/GPU 后端的 vector-dot 和专用内核实现的是**运行时优化计算**。三者关联同一格式，却不是同一层源码。
 
 ## 11. 常见误区
 
-本节将集中澄清位数、bpw、运行速度与精度的常见误解。
+1. **“名称里的位数就是实际 bpw”。** 名义位数主要描述主码设计；实际 bpw 还包含 block 内 metadata。例如 Q4_0 是 4.5 bpw，TQ1_0 是 1.6875 bpw。
+2. **“`qs` 的一个 byte 总是放相邻权重”。** Q4_0 的两个 nibble 对应间隔 16 的权重，Q2_K 同 byte 的四个 2-bit 码槽对应间隔 32 的位置。必须跟对应解码循环确认逻辑顺序。
+3. **“`qh`/`ql`/`hmask` 有跨格式统一位序”。** 这些名字只提示高位、低位或位掩码的大致角色；精确分组、位移和符号语义都由具体 format 规定。
+4. **“K 系列的 `dmin` 是应加上的 minimum”。** Q2_K/Q4_K/Q5_K 的解码式是 `d * sc * q - dmin * m`；`dmin` 所缩放的 min 码构成减项。
+5. **“`block_q8_K` 是普通的持久化 Q8_K 权重格式”。** 头文件注释明确它只用于中间量化和点积；`bsums` 是辅助和，不是新的权重码。
+6. **“IQ 就是均匀整数量化”。** IQ 码可能选择 grid/codebook、sign 组合或非线性码本值；不能把索引当作均匀的独立整数幅值直接乘 scale。
+7. **“头文件共享结构声明，就表示所有后端共享同一份优化代码”。** `ggml-common.h` 共享的是格式声明和部分表数值源；CPU、CUDA、Metal 等后端仍有各自的向量化或设备内核。
+8. **“lookup table 会随每个 IQ block 重复保存”。** block 里保存的是索引和局部 metadata；码本表是程序全局共享资产，不计入 `sizeof(block)` 或 bpw。
+9. **“使用 `QK_K` 就属于 K 系列”。** `QK_K = 256` 被 K、TQ 和多数 IQ 结构共用为 block 长度；它是容量宏，不是家族标签。
+10. **“union 中每个视图都要分别计算容量”。** `d/m` 与 `dm`、`d/s` 与 `ds`、`iq1m_scale_t.u16` 与 `.f16` 都是同一片存储的不同视图，不会重复占字节。
+11. **“按 word 画的 bit 图可以无条件当成跨平台 byte 布局”。** 位移描述的是整数数值中的位；将 byte 数组通过 `memcpy` 或指针视为 `uint16_t`/`uint32_t` 时，byte 与 bit 图的对应还有端序边界。持久化数据应遵循项目的格式/加载逻辑，不能只凭本机 word 视图猜原始 byte。
+12. **“更低 bpw 必然在所有模型上更准或在所有硬件上更快”。** bpw 只描述平均存储成本；质量还取决于模型和量化方法，速度还取决于当前后端是否有匹配的优化内核。
