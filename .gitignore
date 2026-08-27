@@ -1,3 +1,4 @@
 build
 .worktrees/
 models/gpt-2-117M/ggml-model-gpt-2-117M.bin
+models/gpt2-Q4KM/gpt2.Q4_K_M.gguf

@@ -140,6 +140,23 @@ You can now use it like this:
 
 At some point, I might decide to stop hosting these models. So in that case, simply revert to the manual process above.
 
+## Inspecting GGUF/GGML files and `ggml_context` allocation
+
+`gpt-2-parse` prints the model-file layout first, then creates and prints two
+`ggml_context` memory maps. Both calls use `mem_buffer = NULL`; one uses
+`no_alloc = true` (tensor metadata only), and the other uses
+`no_alloc = false` (metadata and tensor payload in the context pool).
+
+```bash
+cmake --build build --target gpt-2-parse
+./build/bin/gpt-2-parse
+./build/bin/gpt-2-parse /path/to/model.gguf
+```
+
+The default file is `models/gpt2-Q4KM/gpt2.Q4_K_M.gguf`. The inspector also
+accepts the older GPT-2 GGML `.bin` format and labels the detected format
+explicitly in its output.
+
 ## Quantizing the models
 
 You can also try to quantize the `ggml` models via 4-bit integer quantization.
