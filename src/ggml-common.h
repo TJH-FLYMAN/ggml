@@ -85,6 +85,17 @@ typedef sycl::half2 ggml_half2;
 
 // QK = number of values after dequantization
 // QK_K = super-block size
+// 在本头文件的量化块定义中，QK4_0、QK5_1、QK8_0、QK4_NL 等宏的值，
+// 表示对应 block_* 结构能够还原出的标量权重数量。例如 QK4_0 = 32 表示
+// 一个 block_q4_0 编码 32 个权重；它不表示 4 bit，也不表示结构体的字节数。
+// QK_K = 256 是被 K、TQ 和多数 IQ block 共用的 256 权重块容量。
+// 这只是本文件量化块宏的约定，不能推广为仓库中任意 QK 前缀宏的通用规则。
+
+// 例如：
+// #define QK4_0 32表示一个 block_q4_0
+// → 保存 32 个量化码
+// → 反量化得到 32 个 float 权重
+// 其中4 表示一个量化值4bit
 
 #define QK_K 256
 #define K_SCALE_SIZE 12
@@ -158,6 +169,14 @@ typedef sycl::half2 ggml_half2;
 
 #endif // GGML_COMMON_DECL_CUDA || GGML_COMMON_DECL_HIP
 
+
+// Q4_0：32 个权重共享一个 FP16 scale d，主量化码为 4 bit。
+// Q4 比较直接：一个字节 8 bit，可以存两个 4-bit 量化码
+// 一个 byte：
+// ┌────────────┬────────────┐
+// │ 高 4 bit q │ 低 4 bit q │
+// └────────────┴────────────┘
+// 反量化：x = d * (q - 8)，q 的范围是 [0, 15]；完整结构实际为 4.5 bpw。
 #define QK4_0 32
 typedef struct {
     ggml_half d;           // delta
@@ -165,6 +184,8 @@ typedef struct {
 } block_q4_0;
 static_assert(sizeof(block_q4_0) == sizeof(ggml_half) + QK4_0 / 2, "wrong q4_0 block size/padding");
 
+// Q4_1：主量化码仍是 4 bit，但额外保存 minimum m，属于仿射量化。
+// 反量化：x = d * q + m；dm 只是 d/m 的 half2 视图，不占额外空间。
 #define QK4_1 32
 typedef struct {
     union {
@@ -178,6 +199,12 @@ typedef struct {
 } block_q4_1;
 static_assert(sizeof(block_q4_1) == 2 * sizeof(ggml_half) + QK4_1 / 2, "wrong q4_1 block size/padding");
 
+
+// Q5_0：32 个权重共享一个 FP16 scale d，主量化码为 5 bit。
+// Q5 因为一个 5-bit 码不方便直接按字节排列，所以拆成：
+// 低 4 bit：保存在 qs[16]
+// 第 5 bit：保存在 qh[4]
+// 反量化：x = d * (q - 16)，q 的范围是 [0, 31]；完整结构实际为 5.5 bpw。
 #define QK5_0 32
 typedef struct {
     ggml_half d;           // delta
@@ -186,6 +213,8 @@ typedef struct {
 } block_q5_0;
 static_assert(sizeof(block_q5_0) == sizeof(ggml_half) + sizeof(uint32_t) + QK5_0 / 2, "wrong q5_0 block size/padding");
 
+// Q5_1：量化码仍由 qs 的低 4 bit 和 qh 的第 5 bit 组成，并额外保存 minimum m。
+// 反量化：x = d * q + m；dm 只是 d/m 的 half2 视图，不占额外空间。
 #define QK5_1 32
 typedef struct {
     union {
@@ -200,6 +229,8 @@ typedef struct {
 } block_q5_1;
 static_assert(sizeof(block_q5_1) == 2 * sizeof(ggml_half) + sizeof(uint32_t) + QK5_1 / 2, "wrong q5_1 block size/padding");
 
+// Q8_0：直接保存 32 个有符号 int8_t 量化码，整个 block 共享 FP16 scale d。
+// 反量化：x = d * q；加上 d 后完整结构实际为 8.5 bpw。
 #define QK8_0 32
 typedef struct {
     ggml_half d;       // delta
@@ -207,6 +238,8 @@ typedef struct {
 } block_q8_0;
 static_assert(sizeof(block_q8_0) == sizeof(ggml_half) + QK8_0, "wrong q8_0 block size/padding");
 
+// Q8_1：量化码同样是有符号 int8_t；s = d * sum(qs) 是点积辅助和，不是 minimum/零点。
+// ds 只是 d/s 的 half2 视图，不占额外空间。
 #define QK8_1 32
 typedef struct {
     union {
@@ -224,6 +257,8 @@ static_assert(sizeof(block_q8_1) == 2*sizeof(ggml_half) + QK8_1, "wrong q8_1 blo
 // Ternary quantization
 //
 
+// TQ1_0：256 个权重共享 FP16 scale d，每个权重只取 {-d, 0, +d} 三个值。
+// qs[48] 以 base-3 方式每 byte 打包 5 个 trit（共 240 个），qh[4] 保存剩余 16 个。
 // 1.6875 bpw
 typedef struct {
     uint8_t qs[(QK_K - 4 * QK_K / 64) / 5]; // 5 elements per byte (3^5 = 243 < 256)
@@ -232,6 +267,8 @@ typedef struct {
 } block_tq1_0;
 static_assert(sizeof(block_tq1_0) == sizeof(ggml_half) + QK_K / 64 + (QK_K - 4 * QK_K / 64) / 5, "wrong tq1_0 block size/padding");
 
+// TQ2_0：同样是 {-d, 0, +d} 三值量化，每 byte 使用四个 2-bit 槽位保存 4 个权重。
+// 有效 code 为 0/1/2，按 x = (code - 1) * d 解码；code 3 不使用。
 // 2.0625 bpw
 typedef struct {
     uint8_t qs[QK_K/4]; // 2 bits per element
@@ -242,11 +279,17 @@ static_assert(sizeof(block_tq2_0) == sizeof(ggml_half) + QK_K / 4, "wrong tq2_0 
 //
 // Super-block quantization structures
 //
+// K 系列把 256 个权重组成一个 super-block，再细分成多个小块。
+// d/dmin 是 super-block 级浮点因子，scales 中保存的是小块 scale/min 的量化整数。
+// 带 min 时可概念性理解为：x = (d * sc) * q - (dmin * m)。
 
 // 2-bit quantization
 // weight is represented as x = a * q + b
 // 16 blocks of 16 elements each
 // Effectively 2.625 bits per weight
+// Q2_K：16 个小块，每块 16 个权重；每个无符号主码 q 占 2 bit。
+// scales 的每个 byte 对应一个小块：低 4 bit 是 sc，高 4 bit 是 m。
+// 反量化：x = d * sc * q - dmin * m。
 typedef struct {
     uint8_t scales[QK_K/16]; // scales and mins, quantized with 4 bits
     uint8_t qs[QK_K/4];      // quants
@@ -264,6 +307,9 @@ static_assert(sizeof(block_q2_K) == 2*sizeof(ggml_half) + QK_K/16 + QK_K/4, "wro
 // weight is represented as x = a * q
 // 16 blocks of 16 elements each
 // Effectively 3.4375 bits per weight
+// Q3_K：16 个小块，每块 16 个权重；qs 保存低 2 bit，hmask 保存第 3 bit。
+// 重组后得到有符号码 q；scales[12] 紧凑保存 16 个 6-bit 小块 scale。
+// 反量化：x = d * sc * q，不使用 minimum。
 typedef struct {
     uint8_t hmask[QK_K/8]; // quants - high bit
     uint8_t qs[QK_K/4];    // quants - low 2 bits
@@ -276,6 +322,9 @@ static_assert(sizeof(block_q3_K) == sizeof(ggml_half) + QK_K / 4 + QK_K / 8 + 12
 // 8 blocks of 32 elements each
 // weight is represented as x = a * q + b
 // Effectively 4.5 bits per weight
+// Q4_K：8 个小块，每块 32 个权重；qs 每 byte 保存两个 4-bit 无符号码。
+// scales[12] 紧凑保存 8 组 6-bit sc/m，d/dmin 再将它们恢复为小块参数。
+// 反量化：x = d * sc * q - dmin * m。
 typedef struct {
     union {
         struct {
@@ -293,6 +342,9 @@ static_assert(sizeof(block_q4_K) == 2*sizeof(ggml_half) + K_SCALE_SIZE + QK_K/2,
 // 8 blocks of 32 elements each
 // weight is represented as x = a * q + b
 // Effectively 5.5 bits per weight
+// Q5_K：小块划分和 scale/min 与 Q4_K 相同，主码增加独立的第 5 bit 平面。
+// qs 保存低 4 bit，qh 保存第 5 bit，重组后 q 的范围为 [0, 31]。
+// 反量化：x = d * sc * q - dmin * m。
 typedef struct {
     union {
         struct {
@@ -311,6 +363,9 @@ static_assert(sizeof(block_q5_K) == 2*sizeof(ggml_half) + K_SCALE_SIZE + QK_K/2 
 // weight is represented as x = a * q
 // 16 blocks of 16 elements each
 // Effectively 6.5625 bits per weight
+// Q6_K：16 个小块，每块 16 个权重；ql 保存低 4 bit，qh 保存高 2 bit。
+// 重组后减 32 得到有符号 6-bit q；每个小块使用一个 int8_t scale。
+// 反量化：x = d * scales[subblock] * q，不使用 minimum。
 typedef struct {
     uint8_t ql[QK_K/2];      // quants, lower 4 bits
     uint8_t qh[QK_K/4];      // quants, upper 2 bits
@@ -319,6 +374,9 @@ typedef struct {
 } block_q6_K;
 static_assert(sizeof(block_q6_K) == sizeof(ggml_half) + QK_K / 16 + 3*QK_K/4, "wrong q6_K block size/padding");
 
+// Q8_K：仅用于中间量化和点积，不是普通的持久化权重格式。
+// 256 个有符号 int8_t 码共享一个 FP32 scale d；x = d * q。
+// bsums 保存每组 16 个 q 的和，用来加速点积，不是额外的权重码。
 // This is only used for intermediate quantization and dot products
 typedef struct {
     float   d;              // delta
@@ -327,6 +385,11 @@ typedef struct {
 } block_q8_K;
 static_assert(sizeof(block_q8_K) == sizeof(float) + QK_K + QK_K/16*sizeof(int16_t), "wrong q8_K block size/padding");
 
+// IQ 系列不是逐权重的简单线性整数码：通常保存 grid/codebook 索引、符号和局部 scale。
+// 名称中的 1/2/3/4 描述主码设计；XXS/XS/S/M/NL 表示不同的压缩与打包布局。
+
+// IQ2_XXS：256 个权重共享 FP16 d；qs 的 packed word 混合保存 grid 索引、符号索引和局部 scale。
+// “2”不表示每个权重都能作为独立的 2-bit 整数解码，恢复时还需要程序内置码本。
 // (Almost) "true" 2-bit quantization.
 // Due to the need to use blocks as per ggml design, it ends up using
 // 2.0625 bpw because of the 16-bit scale for each block of 256.
@@ -336,6 +399,8 @@ typedef struct {
 } block_iq2_xxs;
 static_assert(sizeof(block_iq2_xxs) == sizeof(ggml_half) + QK_K/8*sizeof(uint16_t), "wrong iq2_xxs block size/padding");
 
+// IQ2_XS：每个 uint16_t qs 由 9-bit grid 索引和 7-bit 符号索引组成。
+// scales 的每个 byte 保存两个 4-bit 小块 scale，最终与全局 FP16 d 组合。
 // 2.3125 bpw quants
 typedef struct {
     ggml_half d;
@@ -344,6 +409,8 @@ typedef struct {
 } block_iq2_xs;
 static_assert(sizeof(block_iq2_xs) == sizeof(ggml_half) + QK_K/8*sizeof(uint16_t) + QK_K/32, "wrong iq2_xs block size/padding");
 
+// IQ2_S：10-bit grid 索引拆为 qs 中的低 8 bit 和 qh 中的高 2 bit。
+// qs 的另一部分保存符号掩码，scales 显式保存小块 scale；恢复时同样需要码本。
 // 2.5625 bpw quants
 typedef struct {
     ggml_half d;
@@ -353,6 +420,8 @@ typedef struct {
 } block_iq2_s;
 static_assert(sizeof(block_iq2_s) == sizeof(ggml_half) + QK_K/4 + QK_K/16, "wrong iq2_s block size/padding");
 
+// IQ3_XXS：qs 是混合载荷，分区保存 grid 索引、符号索引和局部 scale。
+// 256 个权重共享 FP16 d；恢复时通过 IQ3 码本查找小向量，而非直接读取 3-bit 整数。
 // (Almost) "true" 3-bit quantization.
 // Due to the need to use blocks as per ggml design, it ends up using
 // 3.0625 bpw because of the 16-bit scale for each block of 256.
@@ -362,6 +431,8 @@ typedef struct {
 } block_iq3_xxs;
 static_assert(sizeof(block_iq3_xxs) == sizeof(ggml_half) + 3*(QK_K/8), "wrong iq3_xxs block size/padding");
 
+// IQ3_S：把各类信息显式分开：qs 保存 grid 索引低位，qh 补索引高位，
+// signs 保存符号掩码，scales 保存压缩的小块 scale，d 是全局 FP16 scale。
 // 3.4375 bpw
 #define IQ3S_N_SCALE QK_K/64
 typedef struct {
@@ -373,6 +444,9 @@ typedef struct {
 } block_iq3_s;
 static_assert(sizeof(block_iq3_s) == sizeof(ggml_half) + 13*(QK_K/32) + IQ3S_N_SCALE, "wrong iq3_s block size/padding");
 
+// IQ1_S：每 32 个权重由四个 8 维 grid 向量表示。
+// qs 保存 grid 索引低 8 bit；qh 混合保存索引高位、小块 scale 和整组 shift 方向。
+// d 是整个 256 权重 block 的 FP16 scale。
 // 1.5625 bpw
 typedef struct {
     ggml_half d;
@@ -381,6 +455,8 @@ typedef struct {
 } block_iq1_s;
 static_assert(sizeof(block_iq1_s) == sizeof(ggml_half) + QK_K/8 + QK_K/16, "wrong iq1_s block size/padding");
 
+// IQ1_M：没有独立的 d 字段；全局 FP16 scale 的 bits 与 3-bit 小块 scale 一起压入 scales。
+// qs/qh 共同保存 grid 索引，qh 还保存每组 grid shift 位；每个 scale code 管 16 个权重。
 // 1.75 bpw
 typedef struct {
     uint8_t  qs[QK_K/8];      // grid index, low 8 bits
@@ -389,12 +465,16 @@ typedef struct {
 } block_iq1_m;
 static_assert(sizeof(block_iq1_m) == QK_K/8 + QK_K/16 + QK_K/32, "wrong iq1_m block size/padding");
 
+// IQ1_M 解码辅助联合体：u16 和 f16 是同一 16-bit 数据的整数/half 两种视图。
+// 它不是量化 block，也不会给 block_iq1_m 增加存储空间。
 // Used by IQ1_M quants
 typedef union {
     ggml_half f16;
     uint16_t  u16;
 } iq1m_scale_t;
 
+// IQ4_NL：32 个权重共享 FP16 d；每个 4-bit nibble 是 16 值非线性码本的索引。
+// 反量化：x = d * kvalues_iq4nl[code]，不能把 code 直接当作线性整数幅值。
 // Non-linear quants
 #define QK4_NL 32
 typedef struct {
@@ -403,6 +483,8 @@ typedef struct {
 } block_iq4_nl;
 static_assert(sizeof(block_iq4_nl) == sizeof(ggml_half) + QK4_NL/2, "wrong iq4_nl block size/padding");
 
+// IQ4_XS：256 个权重分成 8 个 32 权重小块，qs 复用 IQ4_NL 的 4-bit 码本索引。
+// scales_l 保存每个小块 scale 的低 4 bit，scales_h 保存高 2 bit；它们与全局 d 组合。
 typedef struct {
     ggml_half d;
     uint16_t scales_h;
