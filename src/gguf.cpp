@@ -657,7 +657,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
         struct ggml_context * ctx_data = *params.ctx;
 
         struct ggml_tensor * data = nullptr;
-        // 分配了ctx->size内存，读数据到ctx中
+        // 分配了ctx->size内存，加载gguf的tensor data blob到ggml_ctx中
         if (!params.no_alloc) {
             // 创建一个一维字节数组来容纳整个模型的权重数据
             data = ggml_new_tensor_1d(ctx_data, GGML_TYPE_I8, ctx->size);
@@ -677,7 +677,7 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
             ctx->data = data->data;
         }
 
-        // 上面已经分配内存，下面只创建meta数据
+        // 临时打开 no_alloc ,上面已经创建权重数据tensor，下面只创建meta数据
         ggml_set_no_alloc(ctx_data, true);
 
         // create the tensors

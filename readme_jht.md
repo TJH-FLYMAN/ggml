@@ -458,6 +458,35 @@ ggml_backend_tensor_memset(tensor, 0, 0, ggml_nbytes(tensor));
 
 这些函数要求 tensor 已分配、`tensor->buffer` 有效且访问范围不越界。对于 view，代码使用其 `view_src` 的 buffer。CPU buffer 的对应实现最终是 `memcpy` 或 `memset`。
 
+`ggml_backend_tensor_set()` 本身只有一个通用入口。它没有 backend 参数，也不通过 backend 名称执行 `switch`，而是取得 tensor 实际所属的 buffer，再调用 buffer interface 中注册的函数指针：
+
+```c
+ggml_backend_buffer_t buf =
+    tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
+
+buf->iface.set_tensor(buf, tensor, data, offset, size);
+```
+
+因此，真正决定数据如何写入的是 `tensor->buffer->iface.set_tensor`，而不是创建 graph 的 backend 对象。当前源码中主要的同步回调包括：
+
+| Buffer 类型 | `set_tensor` 回调 | 主要行为 |
+| --- | --- | --- |
+| CPU、CPU mapped、CPU HBM | `ggml_backend_cpu_buffer_set_tensor()` | host `memcpy`；mapped/HBM buffer 复用 CPU buffer interface |
+| CUDA | `ggml_backend_cuda_buffer_set_tensor()` | `cudaMemcpyAsync` 从 host 复制到 device，并在同步入口中等待完成 |
+| CUDA split | `ggml_backend_cuda_split_buffer_set_tensor()` | 把完整 tensor 按行拆分到多张 CUDA 设备 |
+| Metal | `ggml_backend_metal_buffer_set_tensor()` | `memcpy` 到 Metal 可访问的共享存储 |
+| Vulkan | `ggml_backend_vk_buffer_set_tensor()` | 通过 `ggml_vk_buffer_write()` 写设备 buffer |
+| OpenCL | `ggml_backend_opencl_buffer_set_tensor()` | 通过 OpenCL queue 写 buffer，部分量化类型还会转换布局 |
+| SYCL | `ggml_backend_sycl_buffer_set_tensor()` | 通过 SYCL queue 从 host 复制到 device |
+| SYCL split | `ggml_backend_sycl_split_buffer_set_tensor()` | 把完整 tensor 拆分到多个 SYCL 设备 |
+| CANN | `ggml_backend_cann_buffer_set_tensor()` | `aclrtMemcpy` 从 host 复制到 device，必要时转换布局 |
+| Kompute | `ggml_backend_kompute_buffer_set_tensor()` | 先写 host/staging 存储，再同步到设备 |
+| RPC | `ggml_backend_rpc_buffer_set_tensor()` | 序列化 tensor、offset 和数据，通过 RPC 写远端 buffer |
+| CPU AMX extra buffer | `ggml_backend_amx_buffer_set_tensor()` | 普通类型执行 `memcpy`，支持的量化权重执行 AMX repack |
+| CPU AArch64 extra buffer | `ggml_backend_cpu_aarch64_buffer_set_tensor()` | 把完整权重 repack 为 AArch64 优化布局 |
+
+BLAS backend 没有独立的 buffer `set_tensor` 实现；它的默认 buffer type 是 CPU，因此仍走 CPU `memcpy`。这也说明“计算 backend”和“tensor 的存储 buffer 类型”需要分开理解。异步入口 `ggml_backend_tensor_set_async()` 属于 backend interface；如果该 backend 没有注册异步回调，它会退回上述同步 `ggml_backend_tensor_set()`。
+
 `GGML_BACKEND_BUFFER_USAGE_WEIGHTS`、`COMPUTE` 和 `ANY` 是用途提示，不改变 buffer 的所有权。释放顺序仍由创建者负责。
 
 ### 为 context 中的 tensor 分配 CPU buffer
@@ -709,13 +738,16 @@ scheduler 负责确定 node/leaf 的 buffer id、插入必要的 copy tensor 并
 `ggml_backend_sched` 位于 backend 执行接口与 graph allocator 之间，负责：
 
 ```text
-用户 graph
-    -> 为 tensor/node 选择 backend
-    -> 按 backend 切分 split
-    -> 创建必要的 copy tensor
-    -> 调用 gallocr 规划各 buffer
-    -> 按 split 顺序提交执行
+用户原始 graph（有时可称为 init graph）
+    -> 为 leaf、node 及相关 source tensor 选择 backend
+    -> 按 nodes[] 顺序切分连续的同-backend split
+    -> 为不兼容的跨-backend 依赖创建 copy tensor，并改写 consumer->src[]
+    -> 构造包含辅助依赖节点的 sched->graph
+    -> 用一个 sched->galloc 统一规划并绑定各 backend buffer
+    -> 按 split 顺序执行：先复制输入，再提交 split->graph
 ```
+
+“init graph”是便于说明的称呼，不是当前源码中的专用结构体类型。它就是应用通过 `ggml_build_forward_expand()` 得到并传给 scheduler 的原始 `ggml_cgraph`。原始 graph 不会在 split 前单独做一次 compute-buffer 分配；scheduler 先完成 backend 分配、split 和 copy tensor 构造，再对增强后的 `sched->graph` 统一规划原始计算 tensor 与辅助 tensor 的内存。
 
 scheduler 的接口支持多个 backend，但本节只具体使用 CPU。即使 scheduler 中只有一个 CPU backend，它仍可统一管理 graph tensor 的计算 buffer、提前 reserve、graph 分配、重复执行和 reset；只是所有 node 都会落在 CPU 上，通常只有一个 split，也不会发生跨 backend copy。
 
@@ -850,6 +882,18 @@ scheduler 会沿 node 顺序向前和向后传播 backend 分配：
 - `inputs[]`：执行前需要复制到该 backend 的 tensor。
 - `graph`：通过 `ggml_graph_view()` 创建的原 graph 视图。
 
+这里的“同一 backend 组成一个 split”是指 **`nodes[]` 中连续的同-backend 区间**，不是把整张图中所有属于同一 backend 的 node 全部合并。例如：
+
+```text
+A@CPU -> B@CPU -> C@GPU -> D@CPU
+
+split 0 = [A, B] @ CPU
+split 1 = [C]    @ GPU
+split 2 = [D]    @ CPU
+```
+
+因此一个 backend 可以对应多个 split。view 类 op 在确定 split 边界时通常被跳过，其存储位置跟随底层 source。
+
 以下情况会开始新的 split：
 
 - 当前 node 的 backend 与前一个 split 不同。
@@ -858,25 +902,171 @@ scheduler 会沿 node 顺序向前和向后传播 backend 分配：
 
 backend id 不同不一定需要复制。如果目标 backend 能直接访问 source 的 buft，原 tensor 可以直接使用。只有目标 backend 不能访问该 buffer 时，scheduler 才创建 copy tensor。
 
+直接访问能力最终由下面的查询决定：
+
+```c
+ggml_backend_supports_buft(target_backend, source_buft)
+```
+
+backend 不同不等于内存一定不兼容。例如 CPU 与 BLAS 都可以使用 host buft，Apple Metal 的统一/映射内存也可能被 CPU 直接访问，同一 device 上的多个 backend 实例也可能支持同一个 buft。反过来，不同 CUDA device、普通 CPU host buffer 与 CUDA device buffer 通常不兼容，需要复制。
+
 copy tensor 由 `ggml_dup_tensor_layout()` 创建，只复制 type、shape 和 stride 等布局，不复制数据。实际数据在执行 split 前通过 backend copy 接口传输。
 
 创建 copy tensor 后，scheduler 会把相关 node 的 `src[j]` 改为当前 copy slot 对应的 tensor。因此 split 过程可能修改用户 graph 中 node 的 source 指针；reset 后不能继续把旧 graph 当作一张未分配的新 graph 使用。
 
+```text
+ggml_backend_sched
+├── sched->ctx / context_buffer， sched->ctx为no_alloc=true创建
+│   └── 管理跨后端 copy tensor 的“壳”
+│       struct ggml_tensor、shape、stride、flags...
+│
+├── sched->hv_tensor_copies
+│   └── 只是保存 tensor 指针的索引表，不拥有 tensor
+│
+└── sched->galloc
+    └── 管理各 backend buffer
+        └── 保存 tensor 的实际数据
+```
+
 ### 内部 allocation graph
 
-scheduler 还会构造一张内部 `sched->graph`，供 gallocr 规划内存。它与用户原始 graph 不完全相同：
+scheduler 处理一张用户 graph 时，会同时形成三种用途不同的 graph 表示：
 
-1. 对每个跨 backend input，加入一个依赖 view，防止 source 在 copy 完成前被 gallocr 回收。
-2. 加入 copy tensor，使其在 split 开始前获得目标 buffer 地址。
-3. 加入原 graph 中属于各 split 的 node。
-4. pipeline 模式下，将多个 copy slot 的输入副本加入 leaf。
-5. 最后加入原 graph 的 leaf。
+| 表示 | 构造方式 | 主要内容 | 用途 |
+| --- | --- | --- | --- |
+| 用户原始 graph | `ggml_build_forward_expand()` 从结果 tensor DFS 得到 | 原始 `nodes[]`、`leafs[]` 和 tensor 依赖 | 表示逻辑计算关系 |
+| `split->graph` | `ggml_graph_view(graph, i_start, i_end)` | 浅引用原始 `nodes[i_start:i_end)` | 提交给一个 backend 执行 |
+| `sched->graph` | scheduler 手工向 `nodes[]/leafs[]` 追加 tensor 指针 | 原始 node、copy tensor、生命周期辅助 tensor | 只供 gallocr 统一规划内存 |
 
-`split->graph` 是原 graph 某段 node 的 view；`sched->graph` 则是为了内存规划而添加了依赖和 copy tensor 的 graph。
+`split->graph` 不是深拷贝。它的 `nodes` 只是指向原 graph node 数组中某个连续区间：
 
-scheduler 负责决定“由谁执行、哪里需要复制”；gallocr 负责决定这些 tensor 在各 buft 对应 buffer 中的 offset。
+```c
+split->graph.nodes   = graph->nodes + split->i_start;
+split->graph.n_nodes = split->i_end - split->i_start;
+```
+
+`sched->graph` 也不是通过 DFS 重新构建的。scheduler 先按最坏辅助节点数量扩容自己的 `nodes[]/leafs[]` 数组，清零 `n_nodes/n_leafs`，然后按 split 顺序手工追加指针。其核心过程可以写成：
+
+```text
+for each split:
+    split->graph = view(original_graph, i_start, i_end)
+
+    for each incompatible cross-backend input:
+        append input_dep  to sched->graph.nodes
+        append input_copy to sched->graph.nodes
+
+    append original_graph.nodes[i_start:i_end]
+
+if pipeline copies are enabled:
+    append all persistent copy slots to sched->graph.leafs
+
+append original_graph.leafs to sched->graph.leafs
+```
+
+每次向 `sched->graph.nodes[]` 或 `leafs[]` 追加指针时，scheduler 都同步填写对应位置的 `node_backend_ids[]` 或 `leaf_backend_ids[]`。这两个数组随后作为 `ggml_gallocr_reserve_n()` 的 buffer-slot 映射。
+
+#### `input_copy` 的构造
+
+假设原图中存在：
+
+```text
+A@CPU --产生 T--> B@GPU
+```
+
+且 GPU 不能直接访问 T 的 CPU buft。scheduler 在自己的 `no_alloc` context 中通过 `ggml_dup_tensor_layout()` 创建 `T_gpu`：
+
+```text
+T_gpu
+├── type/ne[]/nb[] 与 T 相同
+├── buffer = NULL
+└── data   = NULL
+```
+
+随后保存：
+
+```text
+hv_tensor_copies[T][GPU][copy_slot] = T_gpu
+split_gpu.inputs[]                  = T
+B->src[0]                           = T_gpu
+```
+
+此时只是创建并连接 tensor metadata，没有复制数据。`T_gpu` 被放入 `sched->graph.nodes[]`，使 gallocr 能为它在目标 GPU buffer 中安排 offset；B 已改为依赖 `T_gpu`，因此生命周期计数会让副本至少存活到 B 消费结束。
+
+#### `input_dep` 的作用
+
+改写 `B->src[0] = T_gpu` 后，原始 T 与 B 的直接依赖消失。如果只把修改后的原始 graph 交给 gallocr，T 可能在 A 之后就被判断为无后续消费者，其内存会在真正执行 CPU 到 GPU 的 copy 前被复用。
+
+scheduler 因此额外创建：
+
+```c
+struct ggml_tensor * input_dep =
+    ggml_view_tensor(sched->ctx, T);
+input_dep->src[0] = T;
+```
+
+并把 `input_dep` 插到目标 split 的 copy tensor 之前。它形成一条仅用于内存规划的合成依赖：
+
+```text
+T -> input_dep
+```
+
+`input_dep` 是 `sched->ctx` 中的 view metadata，通常保持 `GGML_OP_NONE`，不会出现在真正提交给 backend 的 `split->graph` 中。gallocr 扫描到它时才消耗 T 的最后一次引用，因此 T 的源 buffer 区间会保持有效直到跨 backend copy 的位置。
+
+#### 构造示例
+
+若原始 graph 为：
+
+```text
+original_graph.nodes = [A@CPU, B@GPU, C@GPU, D@CPU]
+
+A 产生 T，B 使用 T
+C 产生 U，D 使用 U
+```
+
+scheduler 得到：
+
+```text
+split 0 = [A]    @ CPU
+split 1 = [B, C] @ GPU
+split 2 = [D]    @ CPU
+
+sched->graph.nodes = [
+    A,
+    input_dep(T), T_gpu,
+    B, C,
+    input_dep(U), U_cpu,
+    D
+]
+```
+
+其中：
+
+- `split 0/1/2.graph` 分别浅引用原 graph 的 `[A]`、`[B,C]`、`[D]`。
+- `sched->graph` 的额外节点只用于表达 copy 两端的分配时点和源数据生命周期。
+- 原始 node 和 leaf metadata 仍由用户 graph context 管理。
+- `T_gpu/U_cpu/input_dep` metadata 由 `sched->ctx` 管理。
+- `sched->graph.nodes/leafs` 指针数组由 scheduler 管理。
+- copy tensor 的实际数据由 `sched->galloc` 创建的目标 backend buffer 管理。
+
+最终 scheduler 负责决定“由谁执行、哪里需要复制”，增强后的 `sched->graph` 负责向 gallocr 表达完整生命周期，gallocr 再决定这些 tensor 在各 buft 对应 buffer 中的 offset。
 
 ### Reserve 与 graph 分配
+
+scheduler 只有一个 `sched->galloc`。不要把 reserve 和 alloc 理解成两个 graph allocator，也不要理解成先为原始 graph 分配一次、再为 `sched->graph` 分配一次。实际是同一个 galloc 对增强后的 `sched->graph` 执行两个阶段：
+
+```text
+reserve / planning
+    -> 模拟生命周期
+    -> 得到每个 tensor 的 buffer_id、offset、size_max
+    -> 计算峰值并创建或扩容各 backend buffer
+
+alloc / binding
+    -> 使用保存的规划
+    -> 设置 tensor->buffer
+    -> 设置 tensor->data = buffer_base + offset
+```
+
+原始计算 tensor 与 copy tensor 都是 `sched->graph` 中的指针，因此会在这一次统一规划中完成分配。预先加载好的模型权重可能已有独立的 weight buffer；那是模型资源，不是 scheduler 对原始 graph 做的“第一次 galloc”。
 
 `sched_reserve` 的流程是：
 
@@ -913,6 +1103,8 @@ if (!ggml_backend_sched_alloc_graph(sched, graph)) {
 3. 如果 node/leaf 对应的 buft 发生变化，或 gallocr 判断原规划不足，则先同步所有 backend。
 4. 调用 `ggml_gallocr_reserve_n()` 重新规划。
 5. 再次调用 `ggml_gallocr_alloc_graph()` 绑定 tensor。
+
+代码中有时会看到 `ggml_gallocr_alloc_graph()` 在一次路径中出现两次：第一次只是尝试复用旧规划；若旧规划不再适用，才执行 `reserve_n()` 并再次调用 `alloc_graph()`。这不是分配两份 compute buffer。
 
 代码比较 backend id 时还会比较 buft。如果 backend id 变化但两个位置使用同一个 buft，不会仅因为 backend id 不同而强制重新规划物理 buffer。
 
@@ -1573,6 +1765,8 @@ GGUF 文件不单独保存任意 stride，因此它表示的是连续 tensor 数
 
 两者不是同一个 context，生命周期也相互独立。
 
+GGUF 中每个具名 tensor info 通常对应一个独立的 `ggml_tensor` metadata，例如 embedding、某层的 attention 权重和 bias 都是不同的 `ggml_tensor`。GGUF 的整个 tensor data blob 并不是这些权重共同使用的一个“模型 tensor”；它只是文件中的连续数据区。加载方式决定这段数据是否以一个内部载体 tensor 的形式进入 context，以及各具名 tensor 的 `data` 最终指向哪里。
+
 `gguf_free(ctx_gguf)` 只释放 GGUF metadata context，不会释放通过 `params.ctx` 返回的 `ggml_context`。反过来，`ggml_free(ctx_weights)` 也不会释放 `gguf_context`。
 
 加载成功后，可以通过名称从返回的 `ggml_context` 中取得真正供 graph 使用的 tensor：
@@ -1627,6 +1821,21 @@ struct ggml_tensor * weight =
 ```
 
 这种模式在 `ctx_weights` 中创建一个 I8 tensor 作为整个文件 data blob 的存储，然后让各权重 tensor 的 `data` 指向该 blob 内部的不同 offset。
+
+实现上先一次性读取整个 blob：
+
+```cpp
+data = ggml_new_tensor_1d(ctx_data, GGML_TYPE_I8, ctx->size);
+gr.read(data->data, ctx->size);
+```
+
+随后临时把 context 切换为 `no_alloc`，只创建每个具名权重的 metadata，并直接设置指针：
+
+```cpp
+cur->data = (char *) data->data + info.offset;
+```
+
+这里没有逐 tensor 再复制一次数据。内部 I8 tensor 的 data 区持有整块 blob，具名权重的 `data` 只是指向其中不同切片；`gguf_context` 中保存的 data 指针也只是别名。
 
 这些权重没有独立的数据所有权。它们的数据随 `ctx_weights` 一起失效，不能单独释放。
 
@@ -1683,6 +1892,58 @@ read gguf_get_tensor_size(ctx_gguf, tensor_id) bytes
 → 分配 CPU backend buffer
 → 从 GGUF 文件复制权重
 ```
+
+三个阶段中，权重 tensor 的状态依次为：
+
+| 阶段 | `tensor->buffer` | `tensor->data` | 权重内容 |
+| --- | --- | --- | --- |
+| `gguf_init_from_file(no_alloc=true)` 返回后 | `NULL` | `NULL` | 仍只在 GGUF 文件中 |
+| `ggml_backend_alloc_ctx_tensors()` 返回后 | 指向目标 backend buffer | 指向该 buffer 中分配的地址 | 目标空间已分配，但还没有装入文件权重 |
+| `ggml_backend_tensor_set()` 完成后 | 不变 | 不变 | backend buffer 中已有有效权重 |
+
+也就是说，`ggml_backend_alloc_ctx_tensors()` 负责给 `buffer` 和 `data` 赋值；`ggml_backend_tensor_set()` 不再修改 `data` 指针，只把源字节写到该指针代表的 backend 区域。在这种模式下，应用通常不会在主机内存中构造一份完整、保持 GGUF 原始布局的 tensor data blob。backend 可以按自己的 alignment、额外 padding、repack 或多设备 split 重新安排各 tensor。
+
+`examples/magika/main.cpp` 是一条完整的 CPU 示例路径。其核心逻辑可以简化为：
+
+```cpp
+// 1. 只解析 GGUF，并在 ctx_weights 中创建权重 metadata。
+struct gguf_init_params params = {
+    /* .no_alloc = */ true,
+    /* .ctx      = */ &ctx_weights,
+};
+struct gguf_context * ctx_gguf =
+    gguf_init_from_file(fname.c_str(), params);
+
+// 此时所有 weight->data == NULL。
+
+// 2. 为所有权重统一分配 backend buffer。
+ggml_backend_buffer_t weight_buffer =
+    ggml_backend_alloc_ctx_tensors(ctx_weights, backend);
+
+// 此时 weight->data 已指向 backend buffer，但尚无有效权重。
+
+// 3. loader 已关闭内部 FILE，因此应用重新打开 GGUF。
+FILE * file = fopen(fname.c_str(), "rb");
+
+for (int64_t i = 0; i < gguf_get_n_tensors(ctx_gguf); ++i) {
+    const char * name = gguf_get_tensor_name(ctx_gguf, i);
+    struct ggml_tensor * weight = ggml_get_tensor(ctx_weights, name);
+
+    const size_t file_offset =
+        gguf_get_data_offset(ctx_gguf) +
+        gguf_get_tensor_offset(ctx_gguf, i);
+
+    std::vector<uint8_t> staging(ggml_nbytes(weight));
+
+    fseek(file, file_offset, SEEK_SET);
+    fread(staging.data(), 1, staging.size(), file);
+    ggml_backend_tensor_set(weight, staging.data(), 0, staging.size());
+}
+
+fclose(file);
+```
+
+其中 `file_offset` 是 GGUF 文件中的源位置，`weight->data` 是 backend buffer 中的目标位置，两者不是同一个 offset 或地址。Magika 默认使用 CPU backend，所以最后的 `ggml_backend_tensor_set()` 经由 `weight->buffer->iface.set_tensor` 分派到 CPU buffer 回调，实际执行 host `memcpy`。若 tensor 属于 CUDA buffer，同一个通用调用则会分派到 CUDA 的 host-to-device copy。
 
 对应生命周期也要分别管理：
 
