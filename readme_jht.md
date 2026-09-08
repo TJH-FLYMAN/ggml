@@ -636,6 +636,22 @@ gallocr 内部主要保存：
 
 gallocr 拥有其创建的 backend buffer。`ggml_gallocr_free()` 会释放所有不重复的 buffer 和内部规划状态；此后绑定在这些 buffer 上的 tensor 数据地址全部失效。buffer type 本身不由 gallocr 释放。
 
+### `ggml_gallocr_t` 的实例数量
+
+`ggml_gallocr_t` 不是进程级或模型级单例，API 允许创建任意多个实例。通常可以把一个 gallocr 理解为一个独立的 graph 计算内存工作区：实例数量取决于需要多少套能够独立规划、持有和复用 compute buffer 的执行环境，而不直接取决于模型数量或 backend 数量。
+
+一个多 backend scheduler 仍然只包含一个 gallocr。scheduler 把所有 backend 的 buft 一次性交给 `ggml_gallocr_new_n()`，由同一个 gallocr 内部的多个 buffer slot 和动态分配器共同管理；因此不能简单理解为“每个 backend 一个 gallocr”。另一方面，每创建一个独立的 scheduler，就会得到一个独立的 gallocr。
+
+以下情况通常会出现多个 gallocr：
+
+- 多个模型运行时各自持有计算工作区。即使模型串行执行，也可以为了隔离生命周期和分配规划而各建一个 gallocr；代价是各实例持有的 compute buffer 可能同时占用内存。
+- 同一个模型存在多个并发推理请求或执行上下文。gallocr 会复用其 backend buffer 中的地址，也不提供并发共享所需的同步，因此同时执行的 graph 通常需要独立 gallocr。
+- 应用创建了多个 scheduler、使用不同的 backend/buft 组合，或者需要让几张 graph 的中间结果和输出同时存活。这些执行环境不能覆盖彼此的 compute buffer。
+
+严格串行的多个模型也可以复用同一个 gallocr，但这是一种由应用显式管理的工作区复用，而不是 gallocr 自动提供的模型隔离。复用时至少应满足：backend/buft slot 配置兼容；前一张 graph 已执行完毕；不再依赖前一张 graph 的计算 tensor 数据；需要保留的输出已复制到 gallocr 之外的持久 buffer；下一张 graph 按自身结构重新 reserve，且多 buffer 场景提供正确的 node/leaf buffer id 映射。最好使用新建的、尚未绑定 `data` 的计算 tensor metadata 构建下一张 graph，因为 reserve 扩容时可能替换实际 buffer，使旧 graph 中保存的 `data` 地址失效。
+
+模型权重通常位于另外分配的长期 backend buffer 中，不属于 gallocr 管理的 compute buffer。因此，共享或拆分 gallocr 主要影响 activation、中间 tensor 和 graph output 的工作区，不决定模型权重是否共享。
+
 ### `reserve`：模拟生命周期并预留实际 buffer
 
 `ggml_gallocr_reserve()` 或 `ggml_gallocr_reserve_n()` 的工作分成两个阶段：
