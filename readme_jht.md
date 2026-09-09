@@ -509,9 +509,16 @@ ggml_backend_buffer_t buffer =
 
 该函数只处理尚未分配数据的 tensor，并使用 backend 的默认 buft。它按对齐和 `get_alloc_size` 计算空间，将 tensor 的 `data`、`buffer` 等字段绑定到实际分配。view 不单独占用数据区，而是由 `ggml_backend_view_init()` 连接到源 tensor。
 
-如果所有 tensor 能放进一个 buffer，函数直接返回该 buffer；只有累计大小超过 buft 的单 buffer 上限时，才分成多个真实 buffer，并返回一个 multi-buffer 包装。这个包装主要用于统一释放、清零和传播 usage，本身没有连续的 base 地址，也不实现普通 tensor 读写。
+如果所有 tensor 能放进一个 buffer，函数直接返回该 buffer；只有累计大小超过 buft 的单 buffer 上限时，才分成多个真实 buffer，并返回一个 multi-buffer 包装。这个 multi-buffer 主要用于统一管理生命周期和传播 usage，本身没有连续的 base 地址，也不实现普通 tensor 读写。子 buffer 的所有权交给了 multi-buffer，不能再单独释放子 buffer，否则会 double free。  
+- ggml_backend_buffer_free(multi_buffer) 会遍历并释放所有子 buffer。  
+- ggml_backend_buffer_clear(multi_buffer, value) 会逐个清空所有子 buffer。  
+- ggml_backend_buffer_set_usage() 会把 usage 传递给所有子 buffer。   
 
-返回的 buffer 拥有这批数据分配，必须在所有相关 tensor 不再使用后调用 `ggml_backend_buffer_free(buffer)`。更完整的生命周期复用和峰值内存规划由后面的 graph allocator 章节说明。
+返回的 buffer 拥有这批数据分配，必须在所有相关 tensor 不再使用后调用 `ggml_backend_buffer_free(buffer)`。更完整的生命周期复用和峰值内存规划由后面的 graph allocator 章节说明。  
+
+其中有一点注意的是：每个ggml_tensor的buffer字段指向的是子 buffer，而非multi-buffer包装，multi-buffer的所有权归应用层所有
+
+multi-buffer和子buffer可使用ggml_backend_buffer_is_multi_buffer进行区分  
 
 ### CPU graph 执行与 `ggml_cplan`
 
