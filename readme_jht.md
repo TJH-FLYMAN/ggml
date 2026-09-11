@@ -600,14 +600,15 @@ ggml_backend_free(backend);
 
 ## Tensor allocator 与 graph allocator
 
-`src/ggml-alloc.c` 中有两类用途不同的 tensor allocator：
+从调用者视角看，`src/ggml-alloc.c` 提供 `ggml_tallocr` 和 `ggml_gallocr` 两类用途不同的 allocator；在实现层，gallocr 还使用私有的 `ggml_dyn_tallocr` 规划 offset：
 
-| 分配器 | 输入 | 分配方式 | 典型用途 |
+| 分配器 | 可见性与输入 | 分配方式 | 典型用途 |
 | --- | --- | --- | --- |
-| `ggml_tallocr` | 一个已经存在的 backend buffer | 只向前移动 offset，不回收 | 将一组长期存在的 tensor 顺序放入 buffer，例如 context tensor 的静态分配 |
-| `ggml_gallocr` | 一个或多个 buffer type，以及一张 graph | 根据 graph 生命周期规划、回收并复用 offset | graph 的 input、output 和中间结果等计算 tensor |
+| `ggml_tallocr` | 公开 API；接收一个已经存在的 backend buffer | 直接绑定 tensor 地址，只向前移动 offset，不回收 | 权重、KV cache、固定输入以及 context tensor 的静态分配 |
+| `ggml_dyn_tallocr` | `ggml-alloc.c` 私有实现；接收 alignment 和待分配大小 | 只计算 offset，支持空闲块回收、合并和复用 | gallocr 在 reserve 阶段模拟 graph tensor 生命周期 |
+| `ggml_gallocr` | 公开 API；接收一个或多个 buffer type，以及一张 graph | 组织生命周期分析，使用 dyn tallocr 规划 offset，并创建和持有实际 buffer | graph 的 input、output、activation 和中间结果等计算 tensor |
 
-二者分配的都是 **tensor 数据区**。不要把 gallocr 管理的 compute buffer 与 CPU `ggml_cplan.work_data` 混为一谈：前者保存 graph tensor 的值，后者是 CPU kernel 在一次计算中使用的临时工作区。
+这些 allocator 最终管理的都是 **tensor 数据区**。不要把 gallocr 管理的 compute buffer 与 CPU `ggml_cplan.work_data` 混为一谈：前者保存 graph tensor 的值，后者是 CPU kernel 在一次计算中使用的临时工作区。
 
 ### `ggml_tallocr`：单 buffer 线性分配
 
@@ -619,7 +620,44 @@ ggml_backend_free(backend);
 4. 调用 `ggml_backend_tensor_alloc()`，把 buffer 和 `base + offset` 绑定到 tensor。
 5. 将 offset 移到下一段空间。
 
-它没有单 tensor 的 free 或复用操作，也不拥有传入的 buffer。`ggml_backend_alloc_ctx_tensors_from_buft()` 内部会先创建一个或多个实际 buffer，再用 `ggml_tallocr` 将对应范围内尚未分配的 tensor 顺序排入其中。
+它没有单 tensor 的 free、reset 或复用操作，也不拥有传入的 buffer。`ggml_backend_alloc_ctx_tensors_from_buft()` 内部会先创建一个或多个实际 buffer，再用 `ggml_tallocr` 将对应范围内尚未分配的 tensor 顺序排入其中。GPT-2 示例也用它把模型权重、KV cache 以及需要固定地址的输入 tensor 放进各自预先创建的 buffer。这些对象的共同点是地址布局稳定、生命周期较长，通常一直保留到所属模型或执行上下文销毁。
+
+### `ggml_dyn_tallocr` 与 `ggml_tallocr`
+
+两者都处理对齐后的 `(offset, size)`，但没有直接调用关系，也不应把 gallocr 理解为包含多个公开的 `ggml_tallocr`：
+
+```text
+ggml_tallocr
+    -> 独立的线性分配工具
+    -> 已有 buffer + 当前 offset
+    -> 立即调用 ggml_backend_tensor_alloc() 绑定 tensor
+
+ggml_gallocr
+    -> 每种不同的 buft 对应一个 ggml_dyn_tallocr
+    -> reserve 时动态分配和归还 offset，记录峰值 max_size
+    -> 按 max_size 创建实际 buffer
+    -> alloc_graph 时才把 buffer + offset 绑定到 tensor
+```
+
+`ggml_dyn_tallocr` 本身没有 backend buffer、base 地址和公开 API。它维护按地址排序的 `free_blocks[]`，`alloc` 返回一个可用 offset，`free_tensor` 把区间归还并与相邻空闲块合并，`max_size` 记录模拟过程中所需的峰值空间。它只负责“地址规划”，实际 buffer 的所有权和 tensor 地址绑定由 gallocr 负责。
+
+选择时可以按 tensor 生命周期判断：
+
+- 分配一次后需要长期保留、执行期间不回收的 tensor，适合 `ggml_tallocr`。典型对象是模型权重、KV cache 和应用自行维护的固定输入区。
+- 随 graph 节点产生和死亡、希望复用旧 tensor 空间的 activation 和中间结果，适合 `ggml_gallocr`；应用不直接使用 `ggml_dyn_tallocr`。
+- graph input/output 也可以由 gallocr 分配：input 会提前安排互不覆盖的空间，output 会保留到 graph 执行完成；它们是否改用独立 tallocr，取决于应用是否要求跨 graph 保持固定地址和数据。
+
+典型模型因此会同时使用两种策略：
+
+```text
+模型长期内存
+├── 权重 buffer       <- ggml_tallocr
+├── KV cache buffer   <- ggml_tallocr
+└── 固定输入 buffer   <- ggml_tallocr（可选）
+
+graph compute buffer  <- ggml_gallocr
+                         └── ggml_dyn_tallocr 规划 activation 和中间 tensor
+```
 
 ### `ggml_gallocr` 的角色与所有权
 
