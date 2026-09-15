@@ -1481,7 +1481,7 @@ void ggml_free(struct ggml_context * ctx) {
 
     GGML_FREE(ctx);
 }
-
+// 查询：ctx 的内存池目前已经占用了多少字节,返回最后一个 object 的结束位置
 size_t ggml_used_mem(const struct ggml_context * ctx) {
     return ctx->objects_end == NULL ? 0 : ctx->objects_end->offs + ctx->objects_end->size;
 }

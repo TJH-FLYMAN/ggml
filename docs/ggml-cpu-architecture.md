@@ -14,7 +14,7 @@
 
 一句话概括：
 
-> ggml 是一个以 `ggml_tensor` 作为 IR 节点、显式构图、显式规划数据内存，并通过 Backend 执行 Kernel 的轻量级张量引擎。
+> ggml 是一个以 `ggml_tensor` 作为 IR（中间表示, Intermediate Representation）节点、显式构图、显式规划数据内存，并通过 Backend 执行 Kernel 的轻量级张量引擎。
 
 最重要的分层不是“模型层数”，而是下面四类对象：
 
