@@ -1815,6 +1815,67 @@ GGUF 文件不单独保存任意 stride，因此它表示的是连续 tensor 数
 
 对于量化类型，`ne[0]` 必须是 block size 的整数倍。tensor info 中记录的 type 必须与 tensor data 区中的实际 block 格式一致；GGUF loader 不会自动量化或反量化数据。
 
+### 从 GGUF offset 到 `ggml_tensor::data`
+
+GGUF tensor info 中的 `offset` 只用于定位文件 tensor data blob 中的原始字节。它不会被复制到运行时 `ggml_tensor` 中，因为 `ggml_tensor` 没有 GGUF offset 字段；完成加载或数据绑定后，tensor 只通过 `data`、`buffer`、`view_src` 和 `view_offs` 描述自己的物理存储。
+
+直接读取完整 blob 时，文件位置与运行时地址的关系为：
+
+```text
+文件绝对位置 = gguf_data_offset + tensor_info.offset
+运行时地址   = blob_memory_base + tensor_info.offset
+```
+
+当前 GGUF loader 会先在返回的 `ggml_context` 中创建一个一维 `GGML_TYPE_I8` tensor，用它保存完整 tensor data blob；随后临时将 context 切换到 `no_alloc`，只创建各权重 tensor 的 metadata，并设置：
+
+```c
+tensor->data = (char *) blob_tensor->data + tensor_info.offset;
+```
+
+内存关系为：
+
+```text
+ggml_context::mem_buffer
+│
+├─ object + I8 blob tensor + [完整 tensor data blob]
+│                              ↑ blob_memory_base
+├─ object + weight_A metadata ── data = blob_memory_base + gguf_offset_A
+├─ object + weight_B metadata ── data = blob_memory_base + gguf_offset_B
+└─ object + weight_C metadata ── data = blob_memory_base + gguf_offset_C
+```
+
+因此每个权重并没有单独复制或分配一份数据。它们共享同一块 blob，但这不是 `ggml_view_*` 意义上的 view：这些 tensor 的 `view_src` 和 `buffer` 仍然可以为 `NULL`，数据所有权隐含在保存 blob 的 `ggml_context` 中。
+
+使用 `no_alloc == true` 时，GGUF loader 只创建 metadata，tensor 初始状态为：
+
+```text
+tensor->data   = NULL
+tensor->buffer = NULL
+```
+
+后续由 backend allocator 设置运行时存储：
+
+```text
+tensor->buffer = backend_buffer
+tensor->data   = backend_buffer_base + runtime_allocation_offset
+```
+
+再从 `gguf_data_offset + tensor_info.offset` 读取文件字节，通过 `ggml_backend_tensor_set()` 写入目标 tensor。这里的 `runtime_allocation_offset` 由 backend 的 alignment、buffer 规划和设备划分决定，通常不等于 GGUF 中的 `tensor_info.offset`；GGUF offset 描述文件布局，backend offset 描述运行时布局，两者不能混用。
+
+从整个 GGML 运行时看，tensor data 可以归纳为四种实际存储形态，另有一个未分配状态：
+
+| 形态 | 典型字段状态 | `data` 的来源 | 数据所有者 |
+| --- | --- | --- | --- |
+| context 内联数据 | `buffer == NULL`、`view_src == NULL`、`data != NULL` | 普通非 view tensor 的 metadata 后方，即 `(void *)(tensor + 1)` | `ggml_context::mem_buffer` |
+| 共享 blob 或外部内存 | 通常 `buffer == NULL`、`view_src == NULL`、`data != NULL` | `blob_base + offset`，也可以是调用者管理的外部地址或 mmap 地址 | 保存 blob 的 context 或外部资源所有者 |
+| backend buffer | `buffer != NULL`、`data != NULL` | `backend_buffer_base + runtime_offset` | CPU、CUDA、Metal 等 backend buffer |
+| view | `view_src != NULL` | `view_src->data + view_offs` | 最底层 `view_src` 所引用的存储 |
+| 尚未分配 | `data == NULL` | 无 | 等待 backend allocator 或调用者绑定数据 |
+
+这不是一个由枚举定义的官方 storage mode 分类，而是按数据来源和所有权做的归纳。仅检查 `data` 是否为空不足以判断所有权，尤其是 `buffer == NULL && data != NULL` 既可能是 context 内联数据，也可能是 GGUF 共享 blob 或外部地址；必须结合 tensor 的创建路径和相关资源生命周期判断。
+
+对于非主机 backend，`data` 即使非空也不保证能被 CPU 直接解引用。通用代码应使用 `ggml_backend_tensor_set()`、`ggml_backend_tensor_get()` 和 backend copy 接口访问数据。
+
 ### `gguf_context` 与 `ggml_context`
 
 `gguf_init_from_file()` 可能同时产生两个不同对象：
